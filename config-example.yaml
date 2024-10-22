@@ -1,0 +1,14 @@
+database:
+  host: db_address.com
+  port: 6543
+  user: postgres
+  password: dbpassword
+  dbname: postgres
+  sslmode: disable
+
+ipinfo:
+  token: TOKEN
+
+connectivity:
+  resolver: 1.1.1.1
+  domain: example.com
