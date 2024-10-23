@@ -12,3 +12,10 @@ ipinfo:
 connectivity:
   resolver: 1.1.1.1
   domain: example.com
+
+  soax:
+  mobile_package_id: 123456
+  mobile_package_key: MobileKey
+  residential_package_id: 789123
+  residential_package_key: ResidentialKey
+  endpoint: proxy.soax.com:5000
