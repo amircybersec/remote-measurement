@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	"connectivity-tester/pkg/database"
 	"connectivity-tester/pkg/server"
+	"connectivity-tester/pkg/soax"
 	"connectivity-tester/pkg/tester"
 )
 
@@ -80,6 +82,82 @@ var testServersCmd = &cobra.Command{
 	},
 }
 
+var getClientsCmd = &cobra.Command{
+	Use:   "get-clients [country] [type] [count]",
+	Short: "Get SOAX clients from a specific country",
+	Args:  cobra.ExactArgs(3),
+	Run: func(cmd *cobra.Command, args []string) {
+		country := args[0]
+		clientType := args[1]
+		count, err := strconv.Atoi(args[2])
+		if err != nil {
+			logger.Error("Invalid count value", "error", err)
+			os.Exit(1)
+		}
+
+		// Validate client type
+		var cType soax.ClientType
+		switch clientType {
+		case "residential":
+			cType = soax.Residential
+		case "mobile":
+			cType = soax.Mobile
+		default:
+			logger.Error("Invalid client type. Must be 'residential' or 'mobile'")
+			os.Exit(1)
+		}
+
+		db, err := initDB()
+		if err != nil {
+			logger.Error("Error initializing database", "error", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+
+		// Initialize SOAX schema
+		err = db.InitSoaxSchema(context.Background())
+		if err != nil {
+			logger.Error("Error initializing SOAX schema", "error", err)
+			os.Exit(1)
+		}
+
+		clients, stats, err := soax.GetUniqueClients(cType, country, count)
+
+		// Always try to insert clients if we have any, regardless of error
+		if len(clients) > 0 {
+			insertErr := db.InsertSoaxClients(context.Background(), clients)
+			if insertErr != nil {
+				logger.Error("Error inserting SOAX clients",
+					"error", insertErr,
+					"clientsFound", len(clients))
+				os.Exit(1)
+			}
+
+			logger.Info("Saved SOAX clients to database",
+				"savedCount", len(clients),
+				"requestedCount", count)
+		}
+
+		// After saving, report any error from the original operation
+		if err != nil {
+			logger.Error("Could not get requested number of unique clients",
+				"error", err,
+				"uniqueFound", stats.UniqueClients,
+				"totalAttempts", stats.TotalAttempts,
+				"duplicates", stats.DuplicateIPs,
+				"requestedCount", count,
+				"savedCount", len(clients))
+			os.Exit(1)
+		}
+
+		logger.Info("Operation completed successfully",
+			"uniqueClients", stats.UniqueClients,
+			"totalAttempts", stats.TotalAttempts,
+			"duplicateIPs", stats.DuplicateIPs,
+			"successRate", float64(stats.UniqueClients)/float64(stats.TotalAttempts))
+	},
+}
+
 func init() {
 	cobra.OnInitialize(initConfig)
 
@@ -89,6 +167,7 @@ func init() {
 
 	rootCmd.AddCommand(addServersCmd)
 	rootCmd.AddCommand(testServersCmd)
+	rootCmd.AddCommand(getClientsCmd)
 }
 
 func initConfig() {

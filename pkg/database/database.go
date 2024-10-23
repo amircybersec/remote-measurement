@@ -148,3 +148,28 @@ func (db *DB) RemoveServer(ctx context.Context, server *models.Server) error {
 
 	return nil
 }
+
+func (db *DB) InsertSoaxClients(ctx context.Context, clients []models.SoaxClient) error {
+	_, err := db.NewInsert().
+		Model(&clients).
+		Exec(ctx)
+
+	if err != nil {
+		return fmt.Errorf("error inserting SOAX clients: %v", err)
+	}
+
+	return nil
+}
+
+func (db *DB) InitSoaxSchema(ctx context.Context) error {
+	_, err := db.NewCreateTable().
+		Model((*models.SoaxClient)(nil)).
+		IfNotExists().
+		Exec(ctx)
+
+	if err != nil {
+		return fmt.Errorf("failed to create SOAX clients table: %v", err)
+	}
+
+	return nil
+}
