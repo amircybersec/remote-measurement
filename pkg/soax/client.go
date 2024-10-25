@@ -1,19 +1,25 @@
 package soax
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
+	"connectivity-tester/pkg/database"
 	"connectivity-tester/pkg/fetch"
 	"connectivity-tester/pkg/ipinfo"
 	"connectivity-tester/pkg/models"
 
-	"github.com/google/uuid"
 	"github.com/spf13/viper"
+	"golang.org/x/exp/slog"
 )
 
 type ClientType string
@@ -21,7 +27,7 @@ type ClientType string
 const (
 	Residential ClientType = "residential"
 	Mobile      ClientType = "mobile"
-	MaxAttempts            = 50 // Maximum number of attempts to get unique IPs
+	MaxRetries             = 10 // Maximum retries per ISP
 )
 
 type FetchStats struct {
@@ -29,17 +35,56 @@ type FetchStats struct {
 	TotalAttempts   int
 	DuplicateIPs    int
 	RequestedCount  int
+	SkippedISPs     []string
 	IsPartialResult bool
 }
 
-func GetUniqueClients(clientType ClientType, country string, count int) ([]models.SoaxClient, FetchStats, error) {
-	var clients []models.SoaxClient
-	stats := FetchStats{
-		RequestedCount: count,
-	}
-	seenIPs := make(map[string]bool)
+// getISPList fetches the list of ISPs/operators for a given country and client type
+func GetISPList(countryISO string, clientType ClientType) ([]string, error) {
+	apiKey := viper.GetString("soax.api_key")
+	logger := slog.Default()
+	var packageKey string
+	var endpoint string
 
-	// Get package credentials based on client type
+	if clientType == Residential {
+		packageKey = viper.GetString("soax.residential_package_key")
+		endpoint = "https://api.soax.com/api/get-country-isp"
+	} else {
+		packageKey = viper.GetString("soax.mobile_package_key")
+		endpoint = "https://api.soax.com/api/get-country-operators"
+	}
+
+	url := fmt.Sprintf("%s?api_key=%s&package_key=%s&country_iso=%s",
+		endpoint, apiKey, packageKey, countryISO)
+
+	logger.Debug("Fetching ISP list",
+		"country", countryISO,
+		"clientType", clientType,
+		"endpoint", endpoint,
+		"url", url)
+
+	fmt.Printf("url:%s\n", url)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch ISP list: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var isps []string
+	if err := json.NewDecoder(resp.Body).Decode(&isps); err != nil {
+		return nil, fmt.Errorf("failed to decode ISP list: %v", err)
+	}
+
+	return isps, nil
+}
+
+// tryGetClientForISP attempts to get a client for a specific ISP
+// Update the tryGetClientForISP function to include client type
+// File: pkg/soax/client.go
+
+func GetClientForISP(isp string, clientType ClientType, country string, maxRetries int, db *database.DB) (*models.SoaxClient, error) {
+	logger := slog.Default()
 	var packageID, packageKey string
 	if clientType == Residential {
 		packageID = viper.GetString("soax.residential_package_id")
@@ -50,47 +95,80 @@ func GetUniqueClients(clientType ClientType, country string, count int) ([]model
 	}
 
 	endpoint := viper.GetString("soax.endpoint")
-	sessionLength := 6 // 10 minutes
+	sessionLength := 6000 // 100 minutes
 
-	for stats.TotalAttempts < MaxAttempts && len(clients) < count {
-		sessionID := rand.Int63()
-		transport := fmt.Sprintf("socks5://package-%s-country-%s-sessionid-%d-sessionlength-%d:%s@%s",
-			packageID, country, sessionID, sessionLength, packageKey, endpoint)
+	logger.Debug("Attempting to get client",
+		"isp", isp,
+		"clientType", clientType,
+		"country", country)
+
+	for retry := 0; retry < maxRetries; retry++ {
+		sessionID := rand.Intn(1000000)
+
+		// Properly encode ISP name
+		encodedISP := strings.ReplaceAll(url.QueryEscape(isp), "+", "%20")
+
+		transport := fmt.Sprintf("socks5://package-%s-country-%s-sessionid-%d-sessionlength-%d-isp-%s-opt-uniqip:%s@%s",
+			packageID, country, sessionID, sessionLength, encodedISP, packageKey, endpoint)
+
+		logger.Debug("Trying to get client",
+			"isp", isp,
+			"retry", retry,
+			"sessionID", sessionID)
 
 		client, err := getClientInfo(transport, sessionID, sessionLength)
-		stats.TotalAttempts++
-
 		if err != nil {
-			fmt.Printf("Error getting client info for session %d: %v\n", sessionID, err)
+			if strings.Contains(err.Error(), "general SOCKS server failure") {
+				logger.Debug("No available nodes for ISP",
+					"isp", isp,
+					"error", err)
+				return nil, fmt.Errorf("no available nodes for ISP %s", isp)
+			}
+			logger.Debug("Failed to get client",
+				"isp", isp,
+				"retry", retry,
+				"error", err)
 			continue
 		}
 
-		if seenIPs[client.IP] {
-			stats.DuplicateIPs++
-			fmt.Printf("Duplicate IP found: %s (Attempt: %d)\n", client.IP, stats.TotalAttempts)
+		// Check if this IP is already in use by a non-expired client
+		existingClient, err := db.GetActiveClientByIP(context.Background(), client.IP)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			logger.Error("Error checking for existing client",
+				"ip", client.IP,
+				"error", err)
 			continue
 		}
 
-		seenIPs[client.IP] = true
-		stats.UniqueClients++
-		clients = append(clients, client)
+		// If we found an active client with this IP, skip it
+		if existingClient != nil && existingClient.ExpirationTime.After(time.Now()) {
+			logger.Debug("Skipping duplicate IP with active session",
+				"ip", client.IP,
+				"expiresAt", existingClient.ExpirationTime)
+			continue
+		}
 
-		fmt.Printf("New unique IP found: %s (Progress: %d/%d, Attempt: %d)\n",
-			client.IP, len(clients), count, stats.TotalAttempts)
+		// Set additional fields
+		client.ISP = isp
+		client.ClientType = string(clientType)
+		client.SessionLength = sessionLength
+
+		logger.Debug("Successfully got unique client",
+			"ip", client.IP,
+			"isp", isp,
+			"retry", retry)
+
+		return &client, nil
 	}
 
-	stats.IsPartialResult = len(clients) < count
+	logger.Debug("Failed to get unique IP after max retries",
+		"isp", isp,
+		"maxRetries", maxRetries)
 
-	var err error
-	if stats.IsPartialResult {
-		err = fmt.Errorf("could only get %d unique IPs out of %d requested after %d attempts",
-			len(clients), count, stats.TotalAttempts)
-	}
-
-	// Always return the clients we found, along with stats and any error
-	return clients, stats, err
+	return nil, fmt.Errorf("failed to get unique IP for ISP %s after %d attempts", isp, maxRetries)
 }
-func getClientInfo(transport string, sessionID int64, sessionLength int) (models.SoaxClient, error) {
+
+func getClientInfo(transport string, sessionID int, sessionLength int) (models.SoaxClient, error) {
 	opts := fetch.Options{
 		Transport:  transport,
 		Method:     "GET",
@@ -139,7 +217,6 @@ func getClientInfo(transport string, sessionID int64, sessionLength int) (models
 
 	now := time.Now()
 	client := models.SoaxClient{
-		UUID:           uuid.New().String(),
 		SessionID:      sessionID,
 		SessionLength:  sessionLength,
 		Time:           now,

@@ -12,6 +12,7 @@ ipinfo:
 connectivity:
   resolver: 1.1.1.1
   domain: example.com
+  allowed_ports: [443, 80, 53, 5222, 5223, 5228]
 
   soax:
   mobile_package_id: 123456
