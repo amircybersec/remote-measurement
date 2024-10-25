@@ -1,3 +1,5 @@
+// File: main.go
+
 package main
 
 import (
@@ -11,6 +13,7 @@ import (
 	"github.com/spf13/viper"
 
 	"connectivity-tester/pkg/database"
+	"connectivity-tester/pkg/measurement"
 	"connectivity-tester/pkg/server"
 	"connectivity-tester/pkg/soax"
 	"connectivity-tester/pkg/tester"
@@ -82,16 +85,21 @@ var testServersCmd = &cobra.Command{
 	},
 }
 
-var getClientsCmd = &cobra.Command{
-	Use:   "get-clients [country] [type] [count]",
-	Short: "Get SOAX clients from a specific country",
-	Args:  cobra.ExactArgs(3),
+var measureCmd = &cobra.Command{
+	Use:   "measure [country] [type] [max-retries]",
+	Short: "Measure connectivity from clients to servers",
+	Long: `Measure connectivity from SOAX clients to working servers.
+[country] is the two-letter country code
+[type] must be either 'residential' or 'mobile'
+[max-retries] is the maximum number of attempts to get a new IP from an ISP`,
+	Example: "measure ir mobile 10",
+	Args:    cobra.ExactArgs(3),
 	Run: func(cmd *cobra.Command, args []string) {
 		country := args[0]
 		clientType := args[1]
-		count, err := strconv.Atoi(args[2])
+		maxRetries, err := strconv.Atoi(args[2])
 		if err != nil {
-			logger.Error("Invalid count value", "error", err)
+			logger.Error("Invalid max-retries value", "error", err)
 			os.Exit(1)
 		}
 
@@ -107,6 +115,11 @@ var getClientsCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		logger.Debug("Initializing measurement process",
+			"country", country,
+			"clientType", clientType,
+			"maxRetries", maxRetries)
+
 		db, err := initDB()
 		if err != nil {
 			logger.Error("Error initializing database", "error", err)
@@ -114,47 +127,28 @@ var getClientsCmd = &cobra.Command{
 		}
 		defer db.Close()
 
-		// Initialize SOAX schema
-		err = db.InitSoaxSchema(context.Background())
+		// Initialize schemas
+		logger.Debug("Initializing database schemas")
+		err = db.InitClientSchema(context.Background())
 		if err != nil {
 			logger.Error("Error initializing SOAX schema", "error", err)
 			os.Exit(1)
 		}
 
-		clients, stats, err := soax.GetUniqueClients(cType, country, count)
-
-		// Always try to insert clients if we have any, regardless of error
-		if len(clients) > 0 {
-			insertErr := db.InsertSoaxClients(context.Background(), clients)
-			if insertErr != nil {
-				logger.Error("Error inserting SOAX clients",
-					"error", insertErr,
-					"clientsFound", len(clients))
-				os.Exit(1)
-			}
-
-			logger.Info("Saved SOAX clients to database",
-				"savedCount", len(clients),
-				"requestedCount", count)
-		}
-
-		// After saving, report any error from the original operation
+		err = db.InitMeasurementSchema(context.Background())
 		if err != nil {
-			logger.Error("Could not get requested number of unique clients",
-				"error", err,
-				"uniqueFound", stats.UniqueClients,
-				"totalAttempts", stats.TotalAttempts,
-				"duplicates", stats.DuplicateIPs,
-				"requestedCount", count,
-				"savedCount", len(clients))
+			logger.Error("Error initializing measurement schema", "error", err)
 			os.Exit(1)
 		}
 
-		logger.Info("Operation completed successfully",
-			"uniqueClients", stats.UniqueClients,
-			"totalAttempts", stats.TotalAttempts,
-			"duplicateIPs", stats.DuplicateIPs,
-			"successRate", float64(stats.UniqueClients)/float64(stats.TotalAttempts))
+		measurementService := measurement.NewMeasurementService(db, logger)
+		err = measurementService.RunMeasurements(context.Background(), country, cType, maxRetries)
+		if err != nil {
+			logger.Error("Error running measurements", "error", err)
+			os.Exit(1)
+		}
+
+		logger.Info("Measurements completed successfully")
 	},
 }
 
@@ -167,7 +161,7 @@ func init() {
 
 	rootCmd.AddCommand(addServersCmd)
 	rootCmd.AddCommand(testServersCmd)
-	rootCmd.AddCommand(getClientsCmd)
+	rootCmd.AddCommand(measureCmd)
 }
 
 func initConfig() {
