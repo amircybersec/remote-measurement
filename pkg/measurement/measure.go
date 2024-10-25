@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"connectivity-tester/pkg/connectivity"
@@ -14,9 +15,17 @@ import (
 	"github.com/spf13/viper"
 )
 
+const maxWorkers = 100 // Adjust based on your system capabilities
+
 type MeasurementService struct {
 	db     *database.DB
 	logger *slog.Logger
+}
+
+// measurementJob represents a single measurement task
+type measurementJob struct {
+	client *models.SoaxClient
+	server models.Server
 }
 
 func NewMeasurementService(db *database.DB, logger *slog.Logger) *MeasurementService {
@@ -109,7 +118,57 @@ func (s *MeasurementService) measureServer(client models.SoaxClient, server mode
 	return nil
 }
 
-// Update the RunMeasurements method
+// worker processes measurement jobs from the jobs channel
+func (s *MeasurementService) worker(wg *sync.WaitGroup, jobs <-chan measurementJob, results chan<- error) {
+	defer wg.Done()
+	for job := range jobs {
+		err := s.measureServer(*job.client, job.server)
+		results <- err
+	}
+}
+
+// processMeasurements handles parallel processing of measurements for a client
+func (s *MeasurementService) processMeasurements(client *models.SoaxClient, servers []models.Server) {
+	jobs := make(chan measurementJob, len(servers))
+	results := make(chan error, len(servers))
+
+	// Start worker pool
+	var wg sync.WaitGroup
+	for i := 0; i < maxWorkers; i++ {
+		wg.Add(1)
+		go s.worker(&wg, jobs, results)
+	}
+
+	// Send jobs to workers
+	for _, server := range servers {
+		jobs <- measurementJob{
+			client: client,
+			server: server,
+		}
+	}
+	close(jobs)
+
+	// Wait for all workers to finish
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Process results
+	var errorCount int
+	for err := range results {
+		if err != nil {
+			errorCount++
+			s.logger.Error("Measurement failed",
+				"error", err,
+				"clientID", client.ID,
+				"clientIP", client.IP,
+				"errorCount", errorCount)
+		}
+	}
+}
+
+// RunMeasurements performs measurements for all clients
 func (s *MeasurementService) RunMeasurements(ctx context.Context, country string, clientType soax.ClientType, maxRetries int) error {
 	// Get ISP list
 	isps, err := soax.GetISPList(country, clientType)
@@ -137,7 +196,9 @@ func (s *MeasurementService) RunMeasurements(ctx context.Context, country string
 	for _, isp := range isps {
 		client, err := soax.GetClientForISP(isp, clientType, country, maxRetries, s.db)
 		if err != nil {
-			// ... error handling ...
+			s.logger.Error("Failed to get client for ISP",
+				"isp", isp,
+				"error", err)
 			continue
 		}
 
@@ -161,17 +222,8 @@ func (s *MeasurementService) RunMeasurements(ctx context.Context, country string
 			"clientID", savedClient.ID,
 			"clientIP", savedClient.IP)
 
-		// Measure connectivity to all servers
-		for _, server := range servers {
-			err = s.measureServer(*savedClient, server)
-			if err != nil {
-				s.logger.Error("Measurement failed",
-					"error", err,
-					"clientID", savedClient.ID,
-					"clientIP", savedClient.IP,
-					"serverID", server.ID)
-			}
-		}
+		// Process measurements in parallel
+		s.processMeasurements(savedClient, servers)
 	}
 
 	return nil
