@@ -1,6 +1,9 @@
 # Connectivity Tester
 
-Connectivity Tester is a tool for managing and testing server connections. It allows you to add servers to a database and perform connectivity tests on them.
+Connectivity Tester is a tool for managing and testing server connections. It allows you to add servers to a database and perform connectivity tests on them. This tool was used to collect connectivity data for measuring shadowsocks blocking from various countries vantage points:
+
+
+<img width="824" alt="Screenshot 2024-11-12 at 11 17 57 AM" src="https://github.com/user-attachments/assets/edd1b91f-8e53-4ae3-bd1a-731f05d1550b">
 
 ## Features
 
@@ -91,8 +94,8 @@ go run main.go -d test-servers
 
 ## License
 
-[Your chosen license]
+Apache 2.0
 
 ## Contributing
 
-[Your contribution guidelines]
+Feel free to open a PR if you want to add a feature or report a bug fix
