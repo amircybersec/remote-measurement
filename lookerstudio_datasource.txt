@@ -12,7 +12,6 @@ SELECT
     c.isp as client_isp,
     c.as_number as client_as_number,
     c.country_code as client_country,
-    c.carrier as client_carrier,
     c.city as client_city,
     -- Server fields
     s.id as server_id,
