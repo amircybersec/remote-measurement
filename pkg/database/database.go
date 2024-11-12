@@ -58,9 +58,11 @@ func (db *DB) InitSchema(ctx context.Context) error {
 func (db *DB) UpsertServer(ctx context.Context, server *models.Server) error {
 	_, err := db.NewInsert().
 		Model(server).
-		On("CONFLICT (ip, port, user_info, domain_name) DO UPDATE").
-		Set("full_access_link = EXCLUDED.full_access_link").
-		Set("scheme = EXCLUDED.scheme").
+		On("CONFLICT (ip, full_access_link) DO UPDATE").
+		Set("udp_error_msg = EXCLUDED.udp_error_msg").
+		Set("udp_error_op = EXCLUDED.udp_error_op").
+		Set("tcp_error_msg = EXCLUDED.tcp_error_msg").
+		Set("tcp_error_op = EXCLUDED.tcp_error_op").
 		Set("ip_type = EXCLUDED.ip_type").
 		Set("as_number = EXCLUDED.as_number").
 		Set("as_org = EXCLUDED.as_org").
@@ -155,8 +157,7 @@ func (db *DB) GetWorkingServers(ctx context.Context, allowedPorts []string) ([]m
 	var servers []models.Server
 	err := db.NewSelect().
 		Model(&servers).
-		Where("(tcp_error_msg IS NULL OR tcp_error_msg = '')").
-		Where("(udp_error_msg IS NULL OR udp_error_msg = '')").
+		Where("((tcp_error_msg IS NULL OR tcp_error_msg = '') OR (udp_error_msg IS NULL OR udp_error_msg = ''))").
 		Where("port IN (?)", bun.In(allowedPorts)).
 		Scan(ctx)
 
@@ -332,4 +333,20 @@ func (db *DB) InsertMeasurement(ctx context.Context, measurement *models.Measure
 	}
 
 	return nil
+}
+
+// Add this helper method to the MeasurementService
+func (db *DB) GetMeasurementsBySession(ctx context.Context, sessionID string, retryNumber int) ([]models.Measurement, error) {
+	var measurements []models.Measurement
+	err := db.NewSelect().
+		Model(&measurements).
+		Where("session_id = ?", sessionID).
+		Where("retry_number = ?", retryNumber).
+		Scan(ctx)
+
+	if err != nil {
+		return nil, fmt.Errorf("error retrieving measurements: %v", err)
+	}
+
+	return measurements, nil
 }
