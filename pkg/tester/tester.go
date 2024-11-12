@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-const maxWorkers = 1000 // Adjust this based on your needs and system capabilities
+const maxWorkers = 1 // Adjust this based on your needs and system capabilities
 
 func TestServers(db *database.DB, retestTCP, retestUDP bool) error {
 	var servers []models.Server
