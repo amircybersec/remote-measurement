@@ -42,9 +42,9 @@ var rootCmd = &cobra.Command{
 }
 
 var addServersCmd = &cobra.Command{
-	Use:   "add-servers [file]",
-	Short: "Add servers from a file to the database",
-	Args:  cobra.ExactArgs(1),
+	Use:   "add-servers [file] [name]",
+	Short: "Add servers from a file to the database and set a common name for all of them",
+	Args:  cobra.RangeArgs(1, 2), // Allow 1-2 arguments
 	Run: func(cmd *cobra.Command, args []string) {
 		db, err := initDB()
 		if err != nil {
@@ -53,7 +53,13 @@ var addServersCmd = &cobra.Command{
 		}
 		defer db.Close()
 
-		err = server.AddServersFromFile(db, args[0])
+		// Default name to empty string if not provided
+		name := ""
+		if len(args) > 1 {
+			name = args[1]
+		}
+
+		err = server.AddServersFromFile(db, args[0], name)
 		if err != nil {
 			logger.Error("Error adding servers", "error", err)
 			os.Exit(1)
@@ -86,20 +92,26 @@ var testServersCmd = &cobra.Command{
 }
 
 var measureCmd = &cobra.Command{
-	Use:   "measure [country] [type] [max-retries]",
+	Use:   "measure [country] [type] [max-retries] [max-clients]",
 	Short: "Measure connectivity from clients to servers",
 	Long: `Measure connectivity from SOAX clients to working servers.
 [country] is the two-letter country code
 [type] must be either 'residential' or 'mobile'
-[max-retries] is the maximum number of attempts to get a new IP from an ISP`,
+[max-retries] is the maximum number of attempts to get a new IP from an ISP
+[max-clients] is the maximum number of clients to try to get from each ISP`,
 	Example: "measure ir mobile 10",
-	Args:    cobra.ExactArgs(3),
+	Args:    cobra.ExactArgs(4),
 	Run: func(cmd *cobra.Command, args []string) {
 		country := args[0]
 		clientType := args[1]
 		maxRetries, err := strconv.Atoi(args[2])
 		if err != nil {
 			logger.Error("Invalid max-retries value", "error", err)
+			os.Exit(1)
+		}
+		maxClients, err := strconv.Atoi(args[3])
+		if err != nil {
+			logger.Error("Invalid max-clients value", "error", err)
 			os.Exit(1)
 		}
 
@@ -141,8 +153,8 @@ var measureCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		measurementService := measurement.NewMeasurementService(db, logger)
-		err = measurementService.RunMeasurements(context.Background(), country, cType, maxRetries)
+		measurementService := measurement.NewMeasurementService(db, logger, viper.GetViper())
+		err = measurementService.RunMeasurements(context.Background(), country, cType, maxRetries, maxClients)
 		if err != nil {
 			logger.Error("Error running measurements", "error", err)
 			os.Exit(1)
