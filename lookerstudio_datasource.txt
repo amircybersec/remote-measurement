@@ -1,0 +1,31 @@
+SELECT 
+    m.id as measurement_id,
+    m.time as measurement_time,
+    m.tcp_error_op,
+    m.tcp_error_msg,
+    m.udp_error_op,
+    m.udp_error_msg,
+    -- Client fields
+    c.id as client_id,
+    c.ip as client_ip,
+    c.client_type,
+    c.isp as client_isp,
+    c.as_number as client_as_number,
+    c.country_code as client_country,
+    c.carrier as client_carrier,
+    c.city as client_city,
+    -- Server fields
+    s.id as server_id,
+    s.ip as server_ip,
+    s.port as server_port,
+    s.as_number as server_as_number,
+    s.as_org as server_as_org,
+    s.scheme as server_scheme,
+    s.domain_name as server_domain,
+    s.country as server_country,
+    s.city as server_city,
+    s.region as server_region
+FROM measurements m
+    JOIN soax_clients c ON m.client_id = c.id
+    JOIN servers s ON m.server_id = s.id
+ORDER BY m.time DESC;
