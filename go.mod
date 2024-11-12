@@ -7,6 +7,7 @@ toolchain go1.21.6
 require (
 	github.com/Jigsaw-Code/outline-sdk v0.0.18-0.20241017140141-fe635b193bf8
 	github.com/Jigsaw-Code/outline-sdk/x v0.0.0-20241014212812-c7e1aea6e535
+	github.com/google/uuid v1.4.0
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/viper v1.18.2
 	github.com/uptrace/bun v1.1.16
