@@ -3,6 +3,7 @@ package connectivity
 import (
 	"connectivity-tester/pkg/models"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -19,7 +20,7 @@ import (
 	"github.com/Jigsaw-Code/outline-sdk/x/connectivity"
 )
 
-type connectivityReport struct {
+type ConnectivityReport struct {
 	Test           testReport  `json:"test"`
 	DNSQueries     []dnsReport `json:"dns_queries,omitempty"`
 	TCPConnections []tcpReport `json:"tcp_connections,omitempty"`
@@ -60,6 +61,7 @@ type udpReport struct {
 	Port     string    `json:"port"`
 	Error    string    `json:"error"`
 	Time     time.Time `json:"time"`
+	Duration int64     `json:"duration_ms"`
 }
 
 type errorJSON struct {
@@ -68,7 +70,8 @@ type errorJSON struct {
 	// Posix error, when available
 	PosixError string `json:"posix_error,omitempty"`
 	// TODO: remove IP addresses
-	Msg string `json:"msg,omitempty"`
+	Msg        string `json:"msg,omitempty"`
+	MsgVerbose string `json:"msg_verbose,omitempty"`
 }
 
 func makeErrorRecord(result *connectivity.ConnectivityError) *errorJSON {
@@ -79,6 +82,8 @@ func makeErrorRecord(result *connectivity.ConnectivityError) *errorJSON {
 	record.Op = result.Op
 	record.PosixError = result.PosixError
 	record.Msg = unwrapAll(result.Err).Error()
+	record.MsgVerbose = result.Err.Error()
+
 	return record
 }
 
@@ -92,7 +97,7 @@ func unwrapAll(err error) error {
 	}
 }
 
-func (r connectivityReport) IsSuccess() bool {
+func (r ConnectivityReport) IsSuccess() bool {
 	if r.Test.Error == nil {
 		return true
 	} else {
@@ -106,6 +111,7 @@ func init() {
 		flag.PrintDefaults()
 	}
 }
+
 func newTCPTraceDialer(
 	onDNS func(ctx context.Context, domain string) func(di httptrace.DNSDoneInfo),
 	onDial func(ctx context.Context, network, addr string, connErr error),
@@ -138,6 +144,7 @@ func newTCPTraceDialer(
 func newUDPTraceDialer(
 	onDNS func(ctx context.Context, domain string) func(di httptrace.DNSDoneInfo),
 	onDial func(ctx context.Context, network, addr string, connErr error),
+	onDialStart func(ctx context.Context, network, addr string),
 ) transport.PacketDialer {
 	dialer := &transport.UDPDialer{}
 	var onDNSDone func(di httptrace.DNSDoneInfo)
@@ -152,6 +159,9 @@ func newUDPTraceDialer(
 					onDNSDone = nil
 				}
 			},
+			ConnectStart: func(network, addr string) {
+				onDialStart(ctx, network, addr)
+			},
 			ConnectDone: func(network, addr string, connErr error) {
 				onDial(ctx, network, addr, connErr)
 			},
@@ -161,8 +171,8 @@ func newUDPTraceDialer(
 }
 
 // TestConnectivity performs the connectivity test with the given parameters
-func TestConnectivity(transportConfig, proto, resolver, domain string) (connectivityReport, error) {
-	var report connectivityReport
+func TestConnectivity(transportConfig, proto, resolver, domain string) (ConnectivityReport, error) {
+	var report ConnectivityReport
 
 	endToEndTransport := transportConfig
 
@@ -173,7 +183,7 @@ func TestConnectivity(transportConfig, proto, resolver, domain string) (connecti
 	tcpReports := make([]tcpReport, 0)
 	udpReports := make([]udpReport, 0)
 	configToDialer := configurl.NewDefaultConfigToDialer()
-	
+
 	onDNS := func(ctx context.Context, domain string) func(di httptrace.DNSDoneInfo) {
 		dnsStart := time.Now()
 		return func(di httptrace.DNSDoneInfo) {
@@ -194,10 +204,18 @@ func TestConnectivity(transportConfig, proto, resolver, domain string) (connecti
 		}
 	}
 
-	configToDialer.BaseStreamDialer = newTCPTraceDialer(onDNS,
-		func(ctx context.Context, network, addr string, connErr error) {
-			ip, port, _ := net.SplitHostPort(addr)
+	configToDialer.BaseStreamDialer = transport.FuncStreamDialer(func(ctx context.Context, addr string) (transport.StreamConn, error) {
+		hostname, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		onDial := func(ctx context.Context, network, addr string, connErr error) {
+			ip, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return
+			}
 			report := tcpReport{
+				Hostname: hostname,
 				IP:       ip,
 				Port:     port,
 				Time:     connectStart[network+"|"+addr].UTC().Truncate(time.Second),
@@ -209,21 +227,37 @@ func TestConnectivity(transportConfig, proto, resolver, domain string) (connecti
 			mu.Lock()
 			tcpReports = append(tcpReports, report)
 			mu.Unlock()
-		},
-		func(ctx context.Context, network, addr string) {
+		}
+		onDialStart := func(ctx context.Context, network, addr string) {
 			mu.Lock()
 			connectStart[network+"|"+addr] = time.Now()
 			mu.Unlock()
-		},
-	)
+		}
 
-	configToDialer.BasePacketDialer = newUDPTraceDialer(onDNS,
-		func(ctx context.Context, network, addr string, connErr error) {
-			ip, port, _ := net.SplitHostPort(addr)
+		return newTCPTraceDialer(onDNS, onDial, onDialStart).DialStream(ctx, addr)
+	})
+
+	configToDialer.BasePacketDialer = transport.FuncPacketDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+		hostname, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		onDialStart := func(ctx context.Context, network, addr string) {
+			mu.Lock()
+			connectStart[network+"|"+addr] = time.Now()
+			mu.Unlock()
+		}
+		onDial := func(ctx context.Context, network, addr string, connErr error) {
+			ip, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return
+			}
 			report := udpReport{
-				IP:   ip,
-				Port: port,
-				Time: time.Now().UTC().Truncate(time.Second),
+				Hostname: hostname,
+				IP:       ip,
+				Port:     port,
+				Time:     connectStart[network+"|"+addr].UTC().Truncate(time.Second),
+				Duration: time.Since(connectStart[network+"|"+addr]).Milliseconds(),
 			}
 			if connErr != nil {
 				report.Error = connErr.Error()
@@ -231,35 +265,37 @@ func TestConnectivity(transportConfig, proto, resolver, domain string) (connecti
 			mu.Lock()
 			udpReports = append(udpReports, report)
 			mu.Unlock()
-		},
-	)
+		}
+
+		return newUDPTraceDialer(onDNS, onDial, onDialStart).DialPacket(ctx, addr)
+	})
 
 	var dnsResolver dns.Resolver
 	switch proto {
 	case "tcp":
 		streamDialer, err := configToDialer.NewStreamDialer(endToEndTransport)
 		if err != nil {
-			return connectivityReport{}, err
+			return ConnectivityReport{}, err
 		}
 		dnsResolver = dns.NewTCPResolver(streamDialer, resolverAddress)
 	case "udp":
 		packetDialer, err := configToDialer.NewPacketDialer(endToEndTransport)
 		if err != nil {
-			return connectivityReport{}, err
+			return ConnectivityReport{}, err
 		}
 		dnsResolver = dns.NewUDPResolver(packetDialer, resolverAddress)
 	default:
-		return connectivityReport{}, errors.New("invalid protocol")
+		return ConnectivityReport{}, errors.New("invalid protocol")
 	}
 
 	startTime := time.Now()
 	result, err := connectivity.TestConnectivityWithResolver(context.Background(), dnsResolver, domain)
 	if err != nil {
-		return connectivityReport{}, err
+		return ConnectivityReport{}, err
 	}
 	testDuration := time.Since(startTime)
 
-	report = connectivityReport{
+	report = ConnectivityReport{
 		Test: testReport{
 			Resolver:   resolverAddress,
 			Proto:      proto,
@@ -272,11 +308,16 @@ func TestConnectivity(transportConfig, proto, resolver, domain string) (connecti
 		UDPConnections: udpReports,
 	}
 
+	reportJSON, err := json.Marshal(report)
+	if err != nil {
+		return ConnectivityReport{}, err
+	}
+	fmt.Printf("report: %v\n", string(reportJSON))
+
 	return report, nil
 }
 
-
-func UpdateResultFromReport(result *models.Server, report connectivityReport, proto string) {
+func UpdateResultFromReport(result *models.Server, report ConnectivityReport, proto string) {
 	if report.Test.Error != nil {
 		errorMsg := report.Test.Error.Msg
 		errorOp := report.Test.Error.Op
@@ -291,4 +332,3 @@ func UpdateResultFromReport(result *models.Server, report connectivityReport, pr
 	}
 	result.LastTestTime = report.Test.Time
 }
-
