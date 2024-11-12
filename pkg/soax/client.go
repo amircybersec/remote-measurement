@@ -39,7 +39,17 @@ type FetchStats struct {
 	IsPartialResult bool
 }
 
-// getISPList fetches the list of ISPs/operators for a given country and client type
+// shuffleStrings shuffles a slice of strings in place
+func shuffleStrings(slice []string) {
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for i := len(slice) - 1; i > 0; i-- {
+		j := r.Intn(i + 1)
+		slice[i], slice[j] = slice[j], slice[i]
+	}
+}
+
+// GetISPList fetches the list of ISPs/operators for a given country and client type
+// and returns them in random order
 func GetISPList(countryISO string, clientType ClientType) ([]string, error) {
 	apiKey := viper.GetString("soax.api_key")
 	logger := slog.Default()
@@ -75,6 +85,9 @@ func GetISPList(countryISO string, clientType ClientType) ([]string, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&isps); err != nil {
 		return nil, fmt.Errorf("failed to decode ISP list: %v", err)
 	}
+
+	// Shuffle the ISP list before returning
+	shuffleStrings(isps)
 
 	return isps, nil
 }
