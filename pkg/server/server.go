@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 
 	"connectivity-tester/pkg/database"
@@ -12,7 +13,7 @@ import (
 	"connectivity-tester/pkg/models"
 )
 
-func AddServersFromFile(db *database.DB, filename string) error {
+func AddServersFromFile(db *database.DB, filename string, serversName string) error {
 	file, err := os.Open(filename)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %v", err)
@@ -30,6 +31,11 @@ func AddServersFromFile(db *database.DB, filename string) error {
 
 		for _, server := range servers {
 			slog.Debug("Adding server", "server", server)
+
+			// set server name field
+			if serversName != "" {
+				server.Name = serversName
+			}
 
 			// Get IP info
 			ipInfo, err := ipinfo.GetIPInfo(server.IP)
@@ -57,13 +63,26 @@ func AddServersFromFile(db *database.DB, filename string) error {
 	return nil
 }
 
-func parseAccessKey(accessKey string) ([] models.Server, error) {
-	var servers [] models.Server
-	server := models.Server{
-		FullAccessLink: accessKey,
+func parseAccessKey(accessKey string) ([]models.Server, error) {
+	var servers []models.Server
+	parsedURL, err := url.Parse(accessKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse access key: %v", err)
 	}
 
-	urls, err := resolveURL(accessKey)
+	fragment := parsedURL.Fragment
+	parsedURL.Fragment = ""
+	fullURLWithoutFragment := parsedURL.String()
+
+	fmt.Printf("Fragment:%s\n", fragment)
+	fmt.Printf("FullAccessLink:%s\n", fullURLWithoutFragment)
+
+	server := models.Server{
+		FullAccessLink: fullURLWithoutFragment,
+		Fragment:       fragment,
+	}
+
+	urls, err := resolveURL(server.FullAccessLink)
 	if err != nil {
 		return nil, err
 	}
