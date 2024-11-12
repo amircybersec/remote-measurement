@@ -6,19 +6,25 @@ import (
 	"github.com/uptrace/bun"
 )
 
+// Update the Measurement model to include session tracking
 type Measurement struct {
-	bun.BaseModel `bun:"table:measurements,alias:m"`
+	bun.BaseModel `bun:"table:measurement,alias:m"`
 
-	ID          int64     `bun:",pk,autoincrement"`
-	ClientID    int64     `bun:",notnull"` // Changed to int64 to match client.ID
-	ServerID    int64     `bun:",notnull"`
-	Time        time.Time `bun:",notnull"`
-	TCPErrorOp  string
-	TCPErrorMsg string
-	UDPErrorOp  string
-	UDPErrorMsg string
+	ID              int64     `bun:",pk,autoincrement"`
+	ClientID        int64     `bun:",notnull"`
+	ServerID        int64     `bun:",notnull"`
+	Time            time.Time `bun:",notnull"`
+	Protocol        string    `bun:",notnull"`
+	SessionID       string
+	RetryNumber     int
+	PrefixUsed      string
+	ErrorMsg        string
+	ErrorMsgVerbose string
+	ErrorOp         string
+	Duration        int64
+	FullReport      []byte `bun:",type:jsonb"`
 
-	Client *SoaxClient `bun:"rel:belongs-to,join:client_id=id"` // Updated join condition
+	Client *SoaxClient `bun:"rel:belongs-to,join:client_id=id"`
 	Server *Server     `bun:"rel:belongs-to,join:server_id=id"`
 }
 

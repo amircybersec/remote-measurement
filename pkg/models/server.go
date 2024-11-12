@@ -10,10 +10,12 @@ type Server struct {
 	bun.BaseModel `bun:"table:servers,alias:s"`
 
 	ID             int64  `bun:",pk,autoincrement"`
-	IP             string `bun:",notnull"`
+	IP             string `bun:",unique:servers_ip_full_access_link_key,notnull"`
 	Port           string `bun:",notnull"`
 	UserInfo       string `bun:",notnull"`
-	FullAccessLink string `bun:",unique,notnull"`
+	FullAccessLink string `bun:",unique:servers_ip_full_access_link_key,notnull"`
+	Name           string
+	Fragment       string
 	Scheme         string `bun:",notnull"`
 	DomainName     string `bun:",notnull"`
 	IPType         string
@@ -29,9 +31,4 @@ type Server struct {
 	UDPErrorOp     string
 	CreatedAt      time.Time `bun:",nullzero,notnull,default:current_timestamp"`
 	UpdatedAt      time.Time `bun:",nullzero,notnull,default:current_timestamp"`
-}
-
-// Add unique constraint for IP, Port, UserInfo combination
-type _ struct {
-	_ struct{} `bun:"unique:servers_ip_port_user_info_key,columns:ip,port,user_info"`
 }

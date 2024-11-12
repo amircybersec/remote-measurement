@@ -21,7 +21,7 @@ type SoaxClient struct {
 	bun.BaseModel `bun:"table:soax_clients,alias:sc"`
 
 	ID             int64     `bun:",pk,autoincrement"`
-	IP             string    `bun:",unique,notnull"` // Changed from pk to unique
+	IP             string    `bun:",notnull"`
 	ClientType     string    `bun:",notnull"`
 	SessionID      int       `bun:",notnull"`
 	SessionLength  int       `bun:",notnull"`
