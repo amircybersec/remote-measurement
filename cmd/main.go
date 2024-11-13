@@ -14,8 +14,9 @@ import (
 
 	"connectivity-tester/pkg/database"
 	"connectivity-tester/pkg/measurement"
+	"connectivity-tester/pkg/models"
+	"connectivity-tester/pkg/proxy"
 	"connectivity-tester/pkg/server"
-	"connectivity-tester/pkg/soax"
 	"connectivity-tester/pkg/tester"
 )
 
@@ -92,45 +93,97 @@ var testServersCmd = &cobra.Command{
 }
 
 var measureCmd = &cobra.Command{
-	Use:   "measure [country] [type] [max-retries] [max-clients]",
+	Use:   "measure [country] [type] [proxy] [max-retries] [max-clients]",
 	Short: "Measure connectivity from clients to servers",
-	Long: `Measure connectivity from SOAX clients to working servers.
+	Long: `Measure connectivity from proxy clients to working servers.
 [country] is the two-letter country code
 [type] must be either 'residential' or 'mobile'
+[proxy] must be either 'soax' or 'proxyrack'
 [max-retries] is the maximum number of attempts to get a new IP from an ISP
 [max-clients] is the maximum number of clients to try to get from each ISP`,
-	Example: "measure ir mobile 10",
-	Args:    cobra.ExactArgs(4),
+	Example: "measure ir mobile soax 5 10",
+	Args:    cobra.ExactArgs(5),
 	Run: func(cmd *cobra.Command, args []string) {
 		country := args[0]
 		clientType := args[1]
-		maxRetries, err := strconv.Atoi(args[2])
+		proxyName := args[2]
+		maxRetries, err := strconv.Atoi(args[3])
 		if err != nil {
 			logger.Error("Invalid max-retries value", "error", err)
 			os.Exit(1)
 		}
-		maxClients, err := strconv.Atoi(args[3])
+		maxClients, err := strconv.Atoi(args[4])
 		if err != nil {
 			logger.Error("Invalid max-clients value", "error", err)
 			os.Exit(1)
 		}
 
-		// Validate client type
-		var cType soax.ClientType
+		// Validate proxy name and create provider config
+		var providerConfig proxy.Config
+		switch proxyName {
+		case "soax":
+			providerConfig = proxy.Config{
+				System:        proxy.SystemSOAX,
+				APIKey:        viper.GetString("soax.api_key"),
+				SessionLength: viper.GetInt("soax.session_length"),
+				Endpoint:      viper.GetString("soax.endpoint"),
+				MaxWorkers:    viper.GetInt("soax.max_workers"),
+			}
+			if clientType == "residential" {
+				providerConfig.PackageID = viper.GetString("soax.residential_package_id")
+				providerConfig.PackageKey = viper.GetString("soax.residential_package_key")
+			}
+			if clientType == "mobile" {
+				providerConfig.PackageID = viper.GetString("soax.mobile_package_id")
+				providerConfig.PackageKey = viper.GetString("soax.mobile_package_key")
+			}
+		case "proxyrack":
+			if clientType == "mobile" {
+				logger.Error("ProxyRack does not support mobile clients")
+				os.Exit(1)
+			}
+			providerConfig = proxy.Config{
+				System:        proxy.SystemProxyRack,
+				Username:      viper.GetString("proxyrack.username"),
+				APIKey:        viper.GetString("proxyrack.api_key"),
+				SessionLength: viper.GetInt("proxyrack.session_length"),
+				Endpoint:      viper.GetString("proxyrack.endpoint"),
+				MaxWorkers:    viper.GetInt("proxyrack.max_workers"),
+			}
+		default:
+			logger.Error("Invalid proxy name. Must be 'soax' or 'proxyrack'")
+			os.Exit(1)
+		}
+
+		// Validate and set client type
+		var cType models.ClientType
 		switch clientType {
 		case "residential":
-			cType = soax.Residential
+			cType = models.ResidentialType
 		case "mobile":
-			cType = soax.Mobile
+			if proxyName == "proxyrack" {
+				logger.Error("ProxyRack does not support mobile clients")
+				os.Exit(1)
+			}
+			cType = models.MobileType
 		default:
 			logger.Error("Invalid client type. Must be 'residential' or 'mobile'")
+			os.Exit(1)
+		}
+
+		// Create provider
+		provider, err := proxy.NewProvider(providerConfig, logger)
+		if err != nil {
+			logger.Error("Failed to create proxy provider", "error", err)
 			os.Exit(1)
 		}
 
 		logger.Debug("Initializing measurement process",
 			"country", country,
 			"clientType", clientType,
-			"maxRetries", maxRetries)
+			"proxy", proxyName,
+			"maxRetries", maxRetries,
+			"maxClients", maxClients)
 
 		db, err := initDB()
 		if err != nil {
@@ -143,7 +196,7 @@ var measureCmd = &cobra.Command{
 		logger.Debug("Initializing database schemas")
 		err = db.InitClientSchema(context.Background())
 		if err != nil {
-			logger.Error("Error initializing SOAX schema", "error", err)
+			logger.Error("Error initializing client schema", "error", err)
 			os.Exit(1)
 		}
 
@@ -154,7 +207,7 @@ var measureCmd = &cobra.Command{
 		}
 
 		measurementService := measurement.NewMeasurementService(db, logger, viper.GetViper())
-		err = measurementService.RunMeasurements(context.Background(), country, cType, maxRetries, maxClients)
+		err = measurementService.RunMeasurements(context.Background(), provider, country, cType, maxRetries, maxClients)
 		if err != nil {
 			logger.Error("Error running measurements", "error", err)
 			os.Exit(1)
