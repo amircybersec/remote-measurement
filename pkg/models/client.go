@@ -1,12 +1,8 @@
 package models
 
 import (
-	"fmt"
-	"net/url"
-	"strings"
 	"time"
 
-	"github.com/spf13/viper"
 	"github.com/uptrace/bun"
 )
 
@@ -17,8 +13,8 @@ const (
 	MobileType      ClientType = "mobile"
 )
 
-type SoaxClient struct {
-	bun.BaseModel `bun:"table:soax_clients,alias:sc"`
+type Client struct {
+	bun.BaseModel `bun:"table:clients,alias:sc"`
 
 	ID             int64     `bun:",pk,autoincrement"`
 	IP             string    `bun:",notnull"`
@@ -37,6 +33,8 @@ type SoaxClient struct {
 	LastSeen       time.Time `bun:",notnull"`
 	UpdateCount    int       `bun:",notnull,default:0"`
 	ISP            string    `bun:",notnull"`
+	Proxy          string    `bun:",notnull"` // can be soax or proxyrack
+	ProxyURL       string    `bun:"-"`        // Do not store in database
 }
 
 type SoaxIPInfo struct {
@@ -51,32 +49,4 @@ type SoaxIPInfo struct {
 		ISP         string `json:"isp"`
 		Region      string `json:"region"`
 	} `json:"data"`
-}
-
-// TransportURL generates the SOAX proxy transport URL for this client
-func (c *SoaxClient) TransportURL() string {
-	var packageID, packageKey string
-
-	// Get the appropriate package ID and key based on client type
-	switch c.ClientType {
-	case "residential":
-		packageID = viper.GetString("soax.residential_package_id")
-		packageKey = viper.GetString("soax.residential_package_key")
-	case "mobile":
-		packageID = viper.GetString("soax.mobile_package_id")
-		packageKey = viper.GetString("soax.mobile_package_key")
-	}
-
-	// Encode ISP name properly
-	encodedISP := strings.ReplaceAll(url.QueryEscape(c.ISP), "+", "%20")
-
-	// Generate transport URL
-	return fmt.Sprintf("socks5://package-%s-country-%s-sessionid-%d-sessionlength-%d-isp-%s-opt-uniqip:%s@%s",
-		packageID,
-		c.CountryCode,
-		c.SessionID,
-		c.SessionLength,
-		encodedISP,
-		packageKey,
-		viper.GetString("soax.endpoint"))
 }
