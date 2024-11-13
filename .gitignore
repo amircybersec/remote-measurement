@@ -33,4 +33,5 @@ githubKeys.txt
 # Trunk
 .trunk
 
+.DS_Store
 */.DS_Store
