@@ -11,7 +11,7 @@ import (
 	"connectivity-tester/pkg/connectivity"
 	"connectivity-tester/pkg/database"
 	"connectivity-tester/pkg/models"
-	"connectivity-tester/pkg/soax"
+	"connectivity-tester/pkg/proxy"
 
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
@@ -29,7 +29,7 @@ type MeasurementService struct {
 
 // measurementJob represents a single measurement task
 type measurementJob struct {
-	client *models.SoaxClient
+	client *models.Client
 	server models.Server
 }
 
@@ -68,7 +68,7 @@ func (s *MeasurementService) getWorkingServers(ctx context.Context) ([]models.Se
 }
 
 // measureServer performs connectivity tests from a client to a server
-func (s *MeasurementService) measureServer(client models.SoaxClient, server models.Server) error {
+func (s *MeasurementService) measureServer(client models.Client, server models.Server) error {
 	// Generate a unique session ID for this measurement series
 	sessionID := uuid.New().String()
 
@@ -139,7 +139,7 @@ func (s *MeasurementService) measureServer(client models.SoaxClient, server mode
 
 // performProtocolMeasurement handles a single measurement for a specific protocol
 func (s *MeasurementService) performProtocolMeasurement(
-	client models.SoaxClient,
+	client models.Client,
 	server models.Server,
 	sessionID string,
 	retryNumber int,
@@ -148,11 +148,14 @@ func (s *MeasurementService) performProtocolMeasurement(
 	protocol string,
 ) error {
 	// Construct the transport config
+	s.logger.Debug("Building transport",
+		"Proxy transport URL: ",
+		client.ProxyURL)
 	var transport string
 	if accessLinkOverride != nil {
-		transport = fmt.Sprintf("%s|%s", client.TransportURL(), *accessLinkOverride)
+		transport = fmt.Sprintf("%s|%s", client.ProxyURL, *accessLinkOverride)
 	} else {
-		transport = fmt.Sprintf("%s|%s", client.TransportURL(), server.FullAccessLink)
+		transport = fmt.Sprintf("%s|%s", client.ProxyURL, server.FullAccessLink)
 	}
 
 	// Skip test for protocol if there is an error message for it on the server
@@ -199,7 +202,7 @@ func (s *MeasurementService) performProtocolMeasurement(
 
 // Update performMeasurement to use performProtocolMeasurement for both protocols
 func (s *MeasurementService) performMeasurement(
-	client models.SoaxClient,
+	client models.Client,
 	server models.Server,
 	sessionID string,
 	retryNumber int,
@@ -286,7 +289,7 @@ func (s *MeasurementService) worker(wg *sync.WaitGroup, jobs <-chan measurementJ
 }
 
 // processMeasurements handles parallel processing of measurements for a client
-func (s *MeasurementService) processMeasurements(client *models.SoaxClient, servers []models.Server) {
+func (s *MeasurementService) processMeasurements(client *models.Client, servers []models.Server) {
 	jobs := make(chan measurementJob, len(servers))
 	results := make(chan error, len(servers))
 
@@ -327,9 +330,9 @@ func (s *MeasurementService) processMeasurements(client *models.SoaxClient, serv
 }
 
 // RunMeasurements performs measurements for all clients
-func (s *MeasurementService) RunMeasurements(ctx context.Context, country string, clientType soax.ClientType, maxRetries int, maxClients int) error {
+func (s *MeasurementService) RunMeasurements(ctx context.Context, p proxy.Provider, country string, clientType models.ClientType, maxRetries int, maxClients int) error {
 	// Get ISP list shuffled
-	isps, err := soax.GetISPList(country, clientType)
+	isps, err := p.GetISPList(country, clientType)
 	if err != nil {
 		return fmt.Errorf("failed to get ISP list: %v", err)
 	}
@@ -354,7 +357,7 @@ func (s *MeasurementService) RunMeasurements(ctx context.Context, country string
 	for _, isp := range isps {
 		// Try to get up to maximum number of clients for the ISP
 		for i := 0; i < maxClients; i++ {
-			client, err := soax.GetClientForISP(isp, clientType, country, maxRetries, s.db)
+			client, err := p.GetClientForISP(isp, clientType, country, maxRetries)
 			if err != nil {
 				s.logger.Error("Failed to get client for ISP",
 					"isp", isp,
@@ -363,7 +366,7 @@ func (s *MeasurementService) RunMeasurements(ctx context.Context, country string
 			}
 
 			// Save client to database and get the updated client with ID
-			savedClients, err := s.db.InsertSoaxClients(ctx, []models.SoaxClient{*client})
+			savedClients, err := s.db.InsertClients(ctx, []models.Client{*client})
 			if err != nil {
 				s.logger.Error("Failed to save client",
 					"error", err,
@@ -382,6 +385,8 @@ func (s *MeasurementService) RunMeasurements(ctx context.Context, country string
 				"clientID", savedClient.ID,
 				"clientIP", savedClient.IP)
 
+			// save the proxy socks5 transport URL
+			savedClient.ProxyURL = p.BuildTransportURL(savedClient)
 			// Process measurements in parallel
 			s.processMeasurements(savedClient, servers)
 		}
