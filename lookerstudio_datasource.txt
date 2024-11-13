@@ -25,6 +25,6 @@ SELECT
     s.city as server_city,
     s.region as server_region
 FROM measurements m
-    JOIN soax_clients c ON m.client_id = c.id
+    JOIN clients c ON m.client_id = c.id
     JOIN servers s ON m.server_id = s.id
 ORDER BY m.time DESC;
