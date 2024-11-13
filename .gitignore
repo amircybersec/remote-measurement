@@ -28,6 +28,9 @@ go.work.sum
 config.yaml
 accessList.txt
 telegramKeys.txt
+githubKeys.txt
 
 # Trunk
 .trunk
+
+*/.DS_Store
