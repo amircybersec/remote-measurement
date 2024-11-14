@@ -111,12 +111,17 @@ func (db *DB) RemoveServer(ctx context.Context, server *models.Server) error {
 // GetWorkingServers returns servers with no errors and allowed ports
 func (db *DB) GetWorkingServers(ctx context.Context, allowedPorts []string) ([]models.Server, error) {
 	var servers []models.Server
-	err := db.NewSelect().
+	query := db.NewSelect().
 		Model(&servers).
-		Where("((tcp_error_msg IS NULL OR tcp_error_msg = '') OR (udp_error_msg IS NULL OR udp_error_msg = ''))").
-		Where("port IN (?)", bun.In(allowedPorts)).
-		Scan(ctx)
+		Where("((tcp_error_msg IS NULL OR tcp_error_msg = '') OR (udp_error_msg IS NULL OR udp_error_msg = ''))")
 
+	// Only add port restriction if allowedPorts is not nil
+	if allowedPorts != nil {
+		query = query.Where("port IN (?)", bun.In(allowedPorts))
+	}
+	// add a mechasnism to get all servers except ones on rejected port list
+
+	err := query.Scan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error getting working servers: %v", err)
 	}
