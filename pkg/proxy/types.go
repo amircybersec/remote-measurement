@@ -10,13 +10,12 @@ const (
 	SystemProxyRack System = "proxyrack"
 )
 
-// Config represents the configuration for a proxy provider
 type Config struct {
 	System        System
 	Username      string
 	APIKey        string
-	PackageID     string // only used by SOAX
-	PackageKey    string // only used by SOAX
+	PackageID     string
+	PackageKey    string
 	SessionLength int
 	Endpoint      string
 	MaxWorkers    int
@@ -27,4 +26,5 @@ type Provider interface {
 	GetISPList(countryISO string, clientType models.ClientType) ([]string, error)
 	GetClientForISP(isp string, clientType models.ClientType, country string, maxRetries int) (*models.Client, error)
 	BuildTransportURL(client *models.Client) string
+	GetProviderName() string
 }
