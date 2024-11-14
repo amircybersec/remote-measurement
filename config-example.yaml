@@ -12,7 +12,6 @@ ipinfo:
 connectivity:
   resolver: 1.1.1.1
   domain: example.com
-  allowed_ports: [443, 80, 53, 5222, 5223, 5228]
 
   soax:
   mobile_package_id: 123456
@@ -20,3 +19,23 @@ connectivity:
   residential_package_id: 789123
   residential_package_key: ResidentialKey
   endpoint: proxy.soax.com:5000
+  max_workers: 1
+  allowed_ports: [443, 80, 53, 5222, 5223, 5228]
+
+proxyrack:
+  username: yourusername
+  api_key: XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX
+  session_length: 300
+  endpoint: premium.residential.proxyrack.net:10000
+  max_workers: 100
+  allowed_ports: [] # Empty array means all ports are allowed
+
+measurement:
+  prefixes:
+    - "%16%03%01%00%C2%A8%01%01"
+    - "%16%03%03%40%00%02"
+    # trunk-ignore(yamllint/quoted-strings)
+    - "POST%20"
+     # trunk-ignore(yamllint/quoted-strings)
+    - "HTTP%2F1.1%20"
+    - "%13%03%03%3F"
