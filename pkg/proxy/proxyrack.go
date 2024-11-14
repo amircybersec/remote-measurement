@@ -15,12 +15,12 @@ import (
 	"connectivity-tester/pkg/models"
 )
 
-type proxyRackProvider struct {
+type ProxyRackProvider struct {
 	config Config
 	logger *slog.Logger
 }
 
-func newProxyRackProvider(config Config, logger *slog.Logger) *proxyRackProvider {
+func newProxyRackProvider(config Config, logger *slog.Logger) *ProxyRackProvider {
 	// Validate required ProxyRack configuration
 	if config.System != SystemProxyRack {
 		panic("invalid system type for ProxyRack provider")
@@ -41,17 +41,21 @@ func newProxyRackProvider(config Config, logger *slog.Logger) *proxyRackProvider
 		config.MaxWorkers = 1 // default to 1 worker if not specified
 	}
 
-	return &proxyRackProvider{
+	return &ProxyRackProvider{
 		config: config,
 		logger: logger,
 	}
 }
 
-func (p *proxyRackProvider) GetISPList(countryISO string, clientType models.ClientType) ([]string, error) {
+func (p *ProxyRackProvider) GetProviderName() string {
+	return "proxyrack"
+}
+
+func (p *ProxyRackProvider) GetISPList(countryISO string, clientType models.ClientType) ([]string, error) {
 	// Build a basic transport URL to access the API
 	transport := fmt.Sprintf("socks5://%s-country-%s:%s@%s",
 		p.config.Username,
-		countryISO,
+		strings.ToUpper(countryISO),
 		p.config.APIKey,
 		p.config.Endpoint)
 
@@ -78,7 +82,7 @@ func (p *proxyRackProvider) GetISPList(countryISO string, clientType models.Clie
 	return isps, nil
 }
 
-func (p *proxyRackProvider) GetClientForISP(isp string, clientType models.ClientType, country string, maxRetries int) (*models.Client, error) {
+func (p *ProxyRackProvider) GetClientForISP(isp string, clientType models.ClientType, country string, maxRetries int) (*models.Client, error) {
 	sessionLength := p.config.SessionLength
 
 	for retry := 0; retry < maxRetries; retry++ {
@@ -184,14 +188,13 @@ func (p *proxyRackProvider) GetClientForISP(isp string, clientType models.Client
 	return nil, fmt.Errorf("failed to get client for ISP %s after %d attempts", isp, maxRetries)
 }
 
-func (p *proxyRackProvider) BuildTransportURL(client *models.Client) string {
-	// Encode ISP name properly
+// BuildTransportURL returns a transport URL for the ProxyRack provider
+func (p *ProxyRackProvider) BuildTransportURL(client *models.Client) string {
 	encodedISP := strings.ReplaceAll(url.QueryEscape(client.ISP), "+", "%20")
 
-	// Generate transport URL
-	return fmt.Sprintf("socks5://%s-country-%s-session-%d-isp-%s:%s@%s",
+	return fmt.Sprintf("socks5://%s-country-%s-session-%d-isp-%s-autoReplace-strict:%s@%s",
 		p.config.Username,
-		client.CountryCode,
+		strings.ToUpper(client.CountryCode),
 		client.SessionID,
 		encodedISP,
 		p.config.APIKey,
