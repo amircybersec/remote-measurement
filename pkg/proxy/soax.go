@@ -16,12 +16,12 @@ import (
 	"connectivity-tester/pkg/models"
 )
 
-type soaxProvider struct {
+type SoaxProvider struct {
 	config Config
 	logger *slog.Logger
 }
 
-func newSOAXProvider(config Config, logger *slog.Logger) *soaxProvider {
+func newSoaxProvider(config Config, logger *slog.Logger) *SoaxProvider {
 	// Validate required SOAX configuration
 	if config.System != SystemSOAX {
 		panic("invalid system type for SOAX provider")
@@ -45,10 +45,14 @@ func newSOAXProvider(config Config, logger *slog.Logger) *soaxProvider {
 		config.MaxWorkers = 1 // default to 1 worker if not specified
 	}
 
-	return &soaxProvider{
+	return &SoaxProvider{
 		config: config,
 		logger: logger,
 	}
+}
+
+func (p *SoaxProvider) GetProviderName() string {
+	return "soax"
 }
 
 func shuffleStrings(slice []string) {
@@ -59,7 +63,7 @@ func shuffleStrings(slice []string) {
 	}
 }
 
-func (p *soaxProvider) GetISPList(countryISO string, clientType models.ClientType) ([]string, error) {
+func (p *SoaxProvider) GetISPList(countryISO string, clientType models.ClientType) ([]string, error) {
 	var packageKey string
 	var endpoint string
 
@@ -91,7 +95,7 @@ func (p *soaxProvider) GetISPList(countryISO string, clientType models.ClientTyp
 	return isps, nil
 }
 
-func (p *soaxProvider) GetClientForISP(isp string, clientType models.ClientType, country string, maxRetries int) (*models.Client, error) {
+func (p *SoaxProvider) GetClientForISP(isp string, clientType models.ClientType, country string, maxRetries int) (*models.Client, error) {
 	sessionLength := p.config.SessionLength
 
 	for retry := 0; retry < maxRetries; retry++ {
@@ -193,7 +197,7 @@ func (p *soaxProvider) GetClientForISP(isp string, clientType models.ClientType,
 	return nil, fmt.Errorf("failed to get client for ISP %s after %d attempts", isp, maxRetries)
 }
 
-func (p *soaxProvider) BuildTransportURL(client *models.Client) string {
+func (p *SoaxProvider) BuildTransportURL(client *models.Client) string {
 	var packageID, packageKey string
 
 	// Get the appropriate package ID and key based on client type
