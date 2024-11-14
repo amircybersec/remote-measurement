@@ -9,7 +9,7 @@ import (
 func NewProvider(config Config, logger *slog.Logger) (Provider, error) {
 	switch config.System {
 	case SystemSOAX:
-		return newSOAXProvider(config, logger), nil
+		return newSoaxProvider(config, logger), nil
 	case SystemProxyRack:
 		return newProxyRackProvider(config, logger), nil
 	default:
