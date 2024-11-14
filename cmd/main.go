@@ -206,7 +206,7 @@ var measureCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		measurementService := measurement.NewMeasurementService(db, logger, viper.GetViper())
+		measurementService := measurement.NewMeasurementService(db, logger, viper.GetViper(), provider)
 		err = measurementService.RunMeasurements(context.Background(), provider, country, cType, maxRetries, maxClients)
 		if err != nil {
 			logger.Error("Error running measurements", "error", err)
