@@ -25,6 +25,7 @@ type MeasurementService struct {
 	logger   *slog.Logger
 	config   *viper.Viper
 	prefixes []string
+	provider proxy.Provider
 }
 
 // measurementJob represents a single measurement task
@@ -34,11 +35,11 @@ type measurementJob struct {
 }
 
 // NewMeasurementService constructor
-func NewMeasurementService(db *database.DB, logger *slog.Logger, config *viper.Viper) *MeasurementService {
+func NewMeasurementService(db *database.DB, logger *slog.Logger, config *viper.Viper, provider proxy.Provider) *MeasurementService {
 	prefixes := config.GetStringSlice("measurement.prefixes")
 	if prefixes == nil {
 		logger.Debug("No prefixes configured")
-		prefixes = []string{} // Empty slice if no prefixes configured
+		prefixes = []string{}
 	}
 
 	return &MeasurementService{
@@ -46,25 +47,42 @@ func NewMeasurementService(db *database.DB, logger *slog.Logger, config *viper.V
 		logger:   logger,
 		config:   config,
 		prefixes: prefixes,
+		provider: provider,
 	}
 }
 
-// getWorkingServers returns servers with no errors and allowed ports
-func (s *MeasurementService) getWorkingServers(ctx context.Context) ([]models.Server, error) {
-	allowedPorts := viper.GetIntSlice("connectivity.allowed_ports")
+// getAllowedPorts returns the allowed ports for a specific proxy service
+func (s *MeasurementService) getAllowedPorts(proxyProvider string) []string {
+	allowedPorts := s.config.GetIntSlice(fmt.Sprintf("%s.allowed_ports", proxyProvider))
+
+	// If the allowed_ports array is empty, it means all ports are allowed
 	if len(allowedPorts) == 0 {
-		return nil, fmt.Errorf("no allowed ports configured")
+		s.logger.Debug("No port restrictions for provider", "provider", proxyProvider)
+		return nil // nil indicates all ports are allowed
 	}
 
-	// Convert ports to strings for comparison
+	// Convert ports to strings for database comparison
 	allowedPortStrs := make([]string, len(allowedPorts))
 	for i, port := range allowedPorts {
 		allowedPortStrs[i] = fmt.Sprintf("%d", port)
 	}
 
-	s.logger.Debug("Getting working servers", "allowedPorts", allowedPortStrs)
+	s.logger.Debug("Got allowed ports for provider",
+		"provider", proxyProvider,
+		"ports", allowedPortStrs)
 
-	return s.db.GetWorkingServers(ctx, allowedPortStrs)
+	return allowedPortStrs
+}
+
+// getWorkingServers returns servers with no errors and allowed ports for the specified provider
+func (s *MeasurementService) getWorkingServers(ctx context.Context, proxyProvider string) ([]models.Server, error) {
+	allowedPorts := s.getAllowedPorts(proxyProvider)
+
+	s.logger.Debug("Getting working servers",
+		"provider", proxyProvider,
+		"allowedPorts", allowedPorts)
+
+	return s.db.GetWorkingServers(ctx, allowedPorts)
 }
 
 // measureServer performs connectivity tests from a client to a server
@@ -290,6 +308,21 @@ func (s *MeasurementService) worker(wg *sync.WaitGroup, jobs <-chan measurementJ
 
 // processMeasurements handles parallel processing of measurements for a client
 func (s *MeasurementService) processMeasurements(client *models.Client, servers []models.Server) {
+	// Determine number of workers
+	var maxWorkers int
+	if s.provider.GetProviderName() == "proxyrack" {
+		maxWorkers = s.config.GetInt("proxyrack.max_workers")
+	} else if s.provider.GetProviderName() == "soax" {
+		maxWorkers = s.config.GetInt("soax.max_workers")
+	} else {
+		maxWorkers = 1
+	}
+
+	// Ensure we don't create more workers than jobs
+	if maxWorkers > len(servers) {
+		maxWorkers = len(servers)
+	}
+
 	jobs := make(chan measurementJob, len(servers))
 	results := make(chan error, len(servers))
 
@@ -337,17 +370,18 @@ func (s *MeasurementService) RunMeasurements(ctx context.Context, p proxy.Provid
 		return fmt.Errorf("failed to get ISP list: %v", err)
 	}
 
-	// Get working servers
-	servers, err := s.getWorkingServers(ctx)
+	// Get working servers for this provider
+	servers, err := s.getWorkingServers(ctx, p.GetProviderName())
 	if err != nil {
 		return fmt.Errorf("failed to get working servers: %v", err)
 	}
 
 	if len(servers) == 0 {
-		return fmt.Errorf("no working servers found")
+		return fmt.Errorf("no working servers found for provider %s", p.GetProviderName())
 	}
 
 	s.logger.Info("Starting measurements",
+		"provider", p.GetProviderName(),
 		"country", country,
 		"clientType", clientType,
 		"ispCount", len(isps),
