@@ -136,27 +136,61 @@ func (db *DB) GetWorkingServers(ctx context.Context, allowedPorts []string) ([]m
 	return servers, nil
 }
 
-func (db *DB) GetServerByID(ctx context.Context, id int64) (*models.Server, error) {
-	var server models.Server
+func (db *DB) GetServersByIDs(ctx context.Context, ids []int64) ([]models.Server, error) {
+	var servers []models.Server
+
+	// If no IDs provided, return empty slice
+	if len(ids) == 0 {
+		return servers, nil
+	}
+
 	err := db.NewSelect().
-		Model(&server).
-		Where("id = ?", id).
+		Model(&servers).
+		Where("id IN (?)", bun.In(ids)).
 		Scan(ctx)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("server with ID %d not found", id)
+			return nil, fmt.Errorf("no servers found for IDs %v", ids)
 		}
-		return nil, fmt.Errorf("error getting server by ID %d: %w", id, err)
+		return nil, fmt.Errorf("error getting servers by IDs %v: %w", ids, err)
 	}
 
-	// Log the query for debugging
-	logger := slog.Default()
-	logger.Debug("Retrieved server by ID",
-		"id", id,
-		"ip", server.IP,
-		"port", server.Port,
-		"name", server.Name)
+	// Check if we found all requested servers
+	if len(servers) != len(ids) {
+		// Create a map of found IDs for easy lookup
+		foundIDs := make(map[int64]bool)
+		for _, server := range servers {
+			foundIDs[server.ID] = true
+		}
 
-	return &server, nil
+		// Find missing IDs
+		var missingIDs []int64
+		for _, id := range ids {
+			if !foundIDs[id] {
+				missingIDs = append(missingIDs, id)
+			}
+		}
+
+		logger := slog.Default()
+		logger.Warn("Some requested servers were not found",
+			"requestedIDs", ids,
+			"missingIDs", missingIDs)
+	}
+
+	// Log the results
+	logger := slog.Default()
+	logger.Debug("Retrieved servers by IDs",
+		"requestedIDs", ids,
+		"foundCount", len(servers))
+
+	for _, server := range servers {
+		logger.Debug("Server details",
+			"id", server.ID,
+			"ip", server.IP,
+			"port", server.Port,
+			"name", server.Name)
+	}
+
+	return servers, nil
 }
