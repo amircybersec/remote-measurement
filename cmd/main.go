@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strconv"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -93,32 +92,64 @@ var testServersCmd = &cobra.Command{
 }
 
 var measureCmd = &cobra.Command{
-	Use:   "measure [country] [type] [proxy] [max-retries] [max-clients]",
+	Use:   "measure",
 	Short: "Measure connectivity from clients to servers",
 	Long: `Measure connectivity from proxy clients to working servers.
-[country] is the two-letter country code
-[type] must be either 'residential' or 'mobile'
-[proxy] must be either 'soax' or 'proxyrack'
-[max-retries] is the maximum number of attempts to get a new IP from an ISP
-[max-clients] is the maximum number of clients to try to get from each ISP`,
-	Example: "measure ir mobile soax 5 10",
-	Args:    cobra.ExactArgs(5),
+Examples:
+  # Test with specific ISP and server:
+  measure --proxy proxyrack --country us --isp Verizon --network residential --clients 5 --server-id 512
+  # Test with random ISPs:
+  measure --proxy soax --country ir --network mobile --clients 10
+  # Test with specific ISP and server group:
+  measure --proxy soax --country ir --isp MNT%20Irancell --network mobile --clients 5 --server-id 512
+
+  Flags:
+  --proxy: Optional. Proxy service (soax or proxyrack); Defaul is proxyrack
+  --country: Required. Country code (e.g., us, uk, ir)
+  --isp: Optional. ISP name. If not provided, tests will be pick random ISPs from target country and network type
+  --network: Optional. Network type (residential or mobile). Default is residential
+  --clients: Required. Maximum number of clients to test with
+  --server-id: Optional. Specific server ID to test
+  --server-group: Optional. Specific server group name to test.
+
+  Please note either server ID or server group name can be provided`,
+
 	Run: func(cmd *cobra.Command, args []string) {
-		country := args[0]
-		clientType := args[1]
-		proxyName := args[2]
-		maxRetries, err := strconv.Atoi(args[3])
-		if err != nil {
-			logger.Error("Invalid max-retries value", "error", err)
-			os.Exit(1)
-		}
-		maxClients, err := strconv.Atoi(args[4])
-		if err != nil {
-			logger.Error("Invalid max-clients value", "error", err)
+		// Get flags
+		proxyName, _ := cmd.Flags().GetString("proxy")
+		country, _ := cmd.Flags().GetString("country")
+		isp, _ := cmd.Flags().GetString("isp")
+		network, _ := cmd.Flags().GetString("network")
+		clients, _ := cmd.Flags().GetInt("clients")
+		serverID, _ := cmd.Flags().GetInt64("server-id")
+
+		// Validate required flags
+		if proxyName == "" || country == "" || network == "" || clients == 0 {
+			logger.Error("Required flags missing",
+				"proxy", proxyName,
+				"country", country,
+				"network", network,
+				"clients", clients)
 			os.Exit(1)
 		}
 
-		// Validate proxy name and create provider config
+		// Validate network type
+		var clientType models.ClientType
+		switch network {
+		case "residential":
+			clientType = models.ResidentialType
+		case "mobile":
+			if proxyName == "proxyrack" {
+				logger.Error("ProxyRack does not support mobile clients")
+				os.Exit(1)
+			}
+			clientType = models.MobileType
+		default:
+			logger.Error("Invalid network type. Must be 'residential' or 'mobile'")
+			os.Exit(1)
+		}
+
+		// Create provider config based on proxy type
 		var providerConfig proxy.Config
 		switch proxyName {
 		case "soax":
@@ -129,19 +160,14 @@ var measureCmd = &cobra.Command{
 				Endpoint:      viper.GetString("soax.endpoint"),
 				MaxWorkers:    viper.GetInt("soax.max_workers"),
 			}
-			if clientType == "residential" {
+			if network == "residential" {
 				providerConfig.PackageID = viper.GetString("soax.residential_package_id")
 				providerConfig.PackageKey = viper.GetString("soax.residential_package_key")
-			}
-			if clientType == "mobile" {
+			} else {
 				providerConfig.PackageID = viper.GetString("soax.mobile_package_id")
 				providerConfig.PackageKey = viper.GetString("soax.mobile_package_key")
 			}
 		case "proxyrack":
-			if clientType == "mobile" {
-				logger.Error("ProxyRack does not support mobile clients")
-				os.Exit(1)
-			}
 			providerConfig = proxy.Config{
 				System:        proxy.SystemProxyRack,
 				Username:      viper.GetString("proxyrack.username"),
@@ -155,36 +181,22 @@ var measureCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Validate and set client type
-		var cType models.ClientType
-		switch clientType {
-		case "residential":
-			cType = models.ResidentialType
-		case "mobile":
-			if proxyName == "proxyrack" {
-				logger.Error("ProxyRack does not support mobile clients")
-				os.Exit(1)
-			}
-			cType = models.MobileType
-		default:
-			logger.Error("Invalid client type. Must be 'residential' or 'mobile'")
-			os.Exit(1)
+		// Get max retries from config
+		maxRetries := viper.GetInt(fmt.Sprintf("%s.max_retries", proxyName))
+		if maxRetries == 0 {
+			maxRetries = 3 // Default if not specified
 		}
 
-		// Create provider
-		provider, err := proxy.NewProvider(providerConfig, logger)
-		if err != nil {
-			logger.Error("Failed to create proxy provider", "error", err)
-			os.Exit(1)
+		settings := measurement.Settings{
+			MaxClients: clients,
+			MaxRetries: maxRetries,
+			ServerID:   serverID,
+			Country:    country,
+			ISP:        isp,
+			ClientType: clientType,
 		}
 
-		logger.Debug("Initializing measurement process",
-			"country", country,
-			"clientType", clientType,
-			"proxy", proxyName,
-			"maxRetries", maxRetries,
-			"maxClients", maxClients)
-
+		// Initialize database
 		db, err := initDB()
 		if err != nil {
 			logger.Error("Error initializing database", "error", err)
@@ -206,8 +218,19 @@ var measureCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// Create provider
+		provider, err := proxy.NewProvider(providerConfig, logger)
+		if err != nil {
+			logger.Error("Failed to create proxy provider", "error", err)
+			os.Exit(1)
+		}
+
 		measurementService := measurement.NewMeasurementService(db, logger, viper.GetViper(), provider)
-		err = measurementService.RunMeasurements(context.Background(), provider, country, cType, maxRetries, maxClients)
+
+		// maxClients, maxRetries, Server ID, Server Group name, ISP name, country code, client type
+
+		// Use existing measurement logic for all other cases
+		err = measurementService.RunMeasurements(context.Background(), provider, settings)
 		if err != nil {
 			logger.Error("Error running measurements", "error", err)
 			os.Exit(1)
@@ -227,6 +250,17 @@ func init() {
 	rootCmd.AddCommand(addServersCmd)
 	rootCmd.AddCommand(testServersCmd)
 	rootCmd.AddCommand(measureCmd)
+
+	// Add new flags to measureCmd
+	measureCmd.Flags().String("proxy", "", "Proxy service (soax or proxyrack)")
+	measureCmd.Flags().String("country", "", "Country code (e.g., us, uk)")
+	measureCmd.Flags().String("isp", "", "ISP name (optional)")
+	measureCmd.Flags().String("network", "", "Network type (residential or mobile)")
+	measureCmd.Flags().Int("clients", 0, "Maximum number of clients to test with")
+	measureCmd.Flags().Int64("server-id", 0, "Specific server ID to test (optional)")
+
+	// Remove the Args requirement since we're using flags
+	measureCmd.Args = cobra.NoArgs
 }
 
 func initConfig() {
