@@ -17,13 +17,11 @@ import (
 	"github.com/spf13/viper"
 )
 
-const maxWorkers = 1 // Adjust based on your system and service capabilities
-
 type Settings struct {
 	Country    string
 	ISP        string
 	ClientType models.ClientType
-	ServerID   int64
+	ServerIDs  []int64
 	MaxRetries int
 	MaxClients int
 }
@@ -64,13 +62,13 @@ func NewMeasurementService(db *database.DB, logger *slog.Logger, config *viper.V
 func (s *MeasurementService) RunMeasurements(ctx context.Context, p proxy.Provider, settings Settings) error {
 	var servers []models.Server
 	var err error
-	if settings.ServerID != 0 {
+	if len(settings.ServerIDs) != 0 {
 		// Get server by ID
-		server, err := s.db.GetServerByID(ctx, settings.ServerID)
+		srvs, err := s.db.GetServersByIDs(ctx, settings.ServerIDs)
 		if err != nil {
 			return fmt.Errorf("failed to get server by ID: %v", err)
 		}
-		servers = append(servers, *server)
+		servers = append(servers, srvs...)
 	} else {
 		// TODO: get servers by group name, must add flag in CLI
 		// Get working servers for this provider
