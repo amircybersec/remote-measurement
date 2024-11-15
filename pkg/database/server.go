@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -133,4 +134,29 @@ func (db *DB) GetWorkingServers(ctx context.Context, allowedPorts []string) ([]m
 		"serverCount", len(servers))
 
 	return servers, nil
+}
+
+func (db *DB) GetServerByID(ctx context.Context, id int64) (*models.Server, error) {
+	var server models.Server
+	err := db.NewSelect().
+		Model(&server).
+		Where("id = ?", id).
+		Scan(ctx)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("server with ID %d not found", id)
+		}
+		return nil, fmt.Errorf("error getting server by ID %d: %w", id, err)
+	}
+
+	// Log the query for debugging
+	logger := slog.Default()
+	logger.Debug("Retrieved server by ID",
+		"id", id,
+		"ip", server.IP,
+		"port", server.Port,
+		"name", server.Name)
+
+	return &server, nil
 }
