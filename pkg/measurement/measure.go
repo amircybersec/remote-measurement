@@ -19,6 +19,15 @@ import (
 
 const maxWorkers = 1 // Adjust based on your system and service capabilities
 
+type Settings struct {
+	Country    string
+	ISP        string
+	ClientType models.ClientType
+	ServerID   int64
+	MaxRetries int
+	MaxClients int
+}
+
 // MeasurementService struct update to include configuration
 type MeasurementService struct {
 	db       *database.DB
@@ -49,6 +58,91 @@ func NewMeasurementService(db *database.DB, logger *slog.Logger, config *viper.V
 		prefixes: prefixes,
 		provider: provider,
 	}
+}
+
+// RunMeasurements performs measurements for all clients
+func (s *MeasurementService) RunMeasurements(ctx context.Context, p proxy.Provider, settings Settings) error {
+	var servers []models.Server
+	var err error
+	if settings.ServerID != 0 {
+		// Get server by ID
+		server, err := s.db.GetServerByID(ctx, settings.ServerID)
+		if err != nil {
+			return fmt.Errorf("failed to get server by ID: %v", err)
+		}
+		servers = append(servers, *server)
+	} else {
+		// TODO: get servers by group name, must add flag in CLI
+		// Get working servers for this provider
+		servers, err = s.getWorkingServers(ctx, p.GetProviderName())
+		if err != nil {
+			return fmt.Errorf("failed to get working servers: %v", err)
+		}
+	}
+
+	if len(servers) == 0 {
+		return fmt.Errorf("no working servers found for provider %s", p.GetProviderName())
+	}
+
+	var isps []string
+	if settings.ISP != "" {
+		// ISP list with only one ISP
+		isps = append(isps, settings.ISP)
+	} else {
+		// Get ISP list shuffled
+		isps, err = p.GetISPList(settings.Country, settings.ClientType)
+		if err != nil {
+			return fmt.Errorf("failed to get ISP list: %v", err)
+		}
+	}
+
+	s.logger.Info("Starting measurements",
+		"provider", p.GetProviderName(),
+		"country", settings.Country,
+		"clientType", settings.ClientType,
+		"ispCount", len(isps),
+		"serverCount", len(servers))
+
+	// Process each ISP
+	for _, isp := range isps {
+		// Try to get up to maximum number of clients for the ISP
+		for i := 0; i < settings.MaxClients; i++ {
+			client, err := p.GetClientForISP(isp, settings.ClientType, settings.Country, settings.MaxRetries)
+			if err != nil {
+				s.logger.Error("Failed to get client for ISP",
+					"isp", isp,
+					"error", err)
+				continue
+			}
+
+			// Save client to database and get the updated client with ID
+			savedClients, err := s.db.InsertClients(ctx, []models.Client{*client})
+			if err != nil {
+				s.logger.Error("Failed to save client",
+					"error", err,
+					"clientIP", client.IP)
+				continue
+			}
+
+			if len(savedClients) == 0 {
+				s.logger.Error("No clients returned after upsert",
+					"clientIP", client.IP)
+				continue
+			}
+
+			savedClient := &savedClients[0]
+			s.logger.Debug("Successfully saved client",
+				"clientID", savedClient.ID,
+				"clientIP", savedClient.IP)
+
+			// save the proxy socks5 transport URL
+			savedClient.ProxyURL = p.BuildTransportURL(savedClient)
+			// Process measurements in parallel
+			s.processMeasurements(savedClient, servers)
+		}
+	}
+
+	return nil
 }
 
 // getAllowedPorts returns the allowed ports for a specific proxy service
@@ -360,71 +454,4 @@ func (s *MeasurementService) processMeasurements(client *models.Client, servers 
 				"errorCount", errorCount)
 		}
 	}
-}
-
-// RunMeasurements performs measurements for all clients
-func (s *MeasurementService) RunMeasurements(ctx context.Context, p proxy.Provider, country string, clientType models.ClientType, maxRetries int, maxClients int) error {
-	// Get ISP list shuffled
-	isps, err := p.GetISPList(country, clientType)
-	if err != nil {
-		return fmt.Errorf("failed to get ISP list: %v", err)
-	}
-
-	// Get working servers for this provider
-	servers, err := s.getWorkingServers(ctx, p.GetProviderName())
-	if err != nil {
-		return fmt.Errorf("failed to get working servers: %v", err)
-	}
-
-	if len(servers) == 0 {
-		return fmt.Errorf("no working servers found for provider %s", p.GetProviderName())
-	}
-
-	s.logger.Info("Starting measurements",
-		"provider", p.GetProviderName(),
-		"country", country,
-		"clientType", clientType,
-		"ispCount", len(isps),
-		"serverCount", len(servers))
-
-	// Process each ISP
-	for _, isp := range isps {
-		// Try to get up to maximum number of clients for the ISP
-		for i := 0; i < maxClients; i++ {
-			client, err := p.GetClientForISP(isp, clientType, country, maxRetries)
-			if err != nil {
-				s.logger.Error("Failed to get client for ISP",
-					"isp", isp,
-					"error", err)
-				continue
-			}
-
-			// Save client to database and get the updated client with ID
-			savedClients, err := s.db.InsertClients(ctx, []models.Client{*client})
-			if err != nil {
-				s.logger.Error("Failed to save client",
-					"error", err,
-					"clientIP", client.IP)
-				continue
-			}
-
-			if len(savedClients) == 0 {
-				s.logger.Error("No clients returned after upsert",
-					"clientIP", client.IP)
-				continue
-			}
-
-			savedClient := &savedClients[0]
-			s.logger.Debug("Successfully saved client",
-				"clientID", savedClient.ID,
-				"clientIP", savedClient.IP)
-
-			// save the proxy socks5 transport URL
-			savedClient.ProxyURL = p.BuildTransportURL(savedClient)
-			// Process measurements in parallel
-			s.processMeasurements(savedClient, servers)
-		}
-	}
-
-	return nil
 }
