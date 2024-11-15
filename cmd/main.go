@@ -121,7 +121,7 @@ Examples:
 		isp, _ := cmd.Flags().GetString("isp")
 		network, _ := cmd.Flags().GetString("network")
 		clients, _ := cmd.Flags().GetInt("clients")
-		serverID, _ := cmd.Flags().GetInt64("server-id")
+		serverID, _ := cmd.Flags().GetInt64Slice("server-id")
 
 		// Validate required flags
 		if proxyName == "" || country == "" || network == "" || clients == 0 {
@@ -190,7 +190,7 @@ Examples:
 		settings := measurement.Settings{
 			MaxClients: clients,
 			MaxRetries: maxRetries,
-			ServerID:   serverID,
+			ServerIDs:  serverID,
 			Country:    country,
 			ISP:        isp,
 			ClientType: clientType,
