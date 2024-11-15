@@ -12,19 +12,20 @@ import (
 // each part can have multiple resolved URLs resulting from resolution
 // of the hostname to different IP addresses.
 type resolvedURLs struct {
-	Host        string
-	Resolved []*url.URL
+	Host          string
+	URLs          []*url.URL
 	TransportJSON []transportJSON `json:"transport_json"`
 }
 
 type transportJSON struct {
-	Scheme    string            `json:"scheme"`
-	UserInfo  string            `json:"user_info,omitempty"`
-	Host      string            `json:"host,omitempty"`
-	IP        string            `json:"ip,omitempty"`
-	IPVersion string            `json:"ip_version,omitempty"`
-	Port      string            `json:"port,omitempty"`
-	Params    map[string]string `json:"params,omitempty"`
+	Scheme             string            `json:"scheme"`
+	UserInfo           string            `json:"user_info,omitempty"`
+	Host               string            `json:"host,omitempty"`
+	IP                 string            `json:"ip,omitempty"`
+	IPVersion          string            `json:"ip_version,omitempty"`
+	Port               string            `json:"port,omitempty"`
+	Params             map[string]string `json:"params,omitempty"`
+	ResolvedAccessLink string            `json:"resolved_access_link,omitempty"`
 }
 
 // resolveParts resolves the hostname in each part of the transport config
@@ -40,31 +41,31 @@ func resolveURL(transport string) (*resolvedURLs, error) {
 	ip := net.ParseIP(u.Hostname())
 	if ip != nil {
 		// hostname is an IP address
-		return &resolvedURLs{Host: u.Hostname(), Resolved: []*url.URL{u}}, nil
+		return &resolvedURLs{Host: u.Hostname(), URLs: []*url.URL{u}}, nil
 	} else {
 		// hostname is a domain name, try to resolve it
-		var resolved []*url.URL
+		var accessLinks []*url.URL
 		ips, err := net.LookupIP(u.Hostname())
 		if err != nil {
 			slog.Error("Failed to resolve hostname", "hostname", u.Hostname(), "error", err)
 			return nil, err
 		}
 		for _, ip := range ips {
-			resolvedURL := *u
+			tempURL := *u
 			// Overwrite the hostname with the resolved IP address
 			if ip.To4() != nil {
-				resolvedURL.Host = ip.String() + ":" + u.Port()
+				tempURL.Host = ip.String() + ":" + u.Port()
 			} else if ip.To16() != nil {
-				resolvedURL.Host = "[" + ip.String() + "]" + ":" + u.Port()
+				tempURL.Host = "[" + ip.String() + "]" + ":" + u.Port()
 			}
-			resolved = append(resolved, &resolvedURL)
+			accessLinks = append(accessLinks, &tempURL)
 		}
-		return &resolvedURLs{Host: u.Hostname(), Resolved: resolved}, nil
+		return &resolvedURLs{Host: u.Hostname(), URLs: accessLinks}, nil
 	}
 }
 
 func addTransportInfo(r *resolvedURLs) error {
-	for _, u := range r.Resolved {
+	for _, u := range r.URLs {
 		params := make(map[string]string)
 
 		// Use the RawQuery field to get the original encoded query string
@@ -104,13 +105,14 @@ func addTransportInfo(r *resolvedURLs) error {
 		}
 
 		r.TransportJSON = append(r.TransportJSON, transportJSON{
-			Scheme:    u.Scheme,
-			Host:      domain,
-			UserInfo: u.User.String(),
-			IP:        ipAddress,
-			IPVersion: ipVersion,
-			Port:      u.Port(),
-			Params:    params,
+			Scheme:             u.Scheme,
+			Host:               domain,
+			UserInfo:           u.User.String(),
+			IP:                 ipAddress,
+			IPVersion:          ipVersion,
+			Port:               u.Port(),
+			Params:             params,
+			ResolvedAccessLink: u.String(),
 		})
 	}
 	return nil
