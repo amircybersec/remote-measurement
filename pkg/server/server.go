@@ -77,12 +77,7 @@ func parseAccessKey(accessKey string) ([]models.Server, error) {
 	fmt.Printf("Fragment:%s\n", fragment)
 	fmt.Printf("FullAccessLink:%s\n", fullURLWithoutFragment)
 
-	server := models.Server{
-		FullAccessLink: fullURLWithoutFragment,
-		Fragment:       fragment,
-	}
-
-	urls, err := resolveURL(server.FullAccessLink)
+	urls, err := resolveURL(fullURLWithoutFragment)
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +87,7 @@ func parseAccessKey(accessKey string) ([]models.Server, error) {
 		return nil, err
 	}
 
+	server := models.Server{}
 	for _, t := range urls.TransportJSON {
 		server.IP = t.IP
 		server.Port = t.Port
@@ -99,6 +95,8 @@ func parseAccessKey(accessKey string) ([]models.Server, error) {
 		server.DomainName = t.Host
 		server.UserInfo = t.UserInfo
 		server.Scheme = t.Scheme
+		server.FullAccessLink = t.ResolvedAccessLink
+		server.Fragment = fragment
 		servers = append(servers, server)
 	}
 	return servers, nil

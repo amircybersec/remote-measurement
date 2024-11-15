@@ -99,6 +99,7 @@ func testServer(db *database.DB, server *models.Server, testTCP, testUDP bool) e
 
 	if testFailed {
 		// Remove server from database if any test failed
+		// This could be caused by invalid URL or incompatible scheme
 		err := db.RemoveServer(context.Background(), server)
 		if err != nil {
 			return fmt.Errorf("failed to remove server after test failure: %v", err)

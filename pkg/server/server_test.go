@@ -9,32 +9,32 @@ import (
 
 func TestResolveURL(t *testing.T) {
 	tests := []struct {
-		name        string
-		transport   string
-		wantHost    string
+		name              string
+		transport         string
+		wantHost          string
 		wantResolvedCount int
-		wantErr     bool
+		wantErr           bool
 	}{
 		{
-			name:      "Valid IP address",
-			transport: "ss://user:pass@192.168.1.1:8388",
-			wantHost:  "192.168.1.1",
+			name:              "Valid IP address",
+			transport:         "ss://user:pass@192.168.1.1:8388",
+			wantHost:          "192.168.1.1",
 			wantResolvedCount: 1,
-			wantErr:   false,
+			wantErr:           false,
 		},
 		{
-			name:      "Valid domain name",
-			transport: "ss://user:pass@example.com:8388",
-			wantHost:  "example.com",
+			name:              "Valid domain name",
+			transport:         "ss://user:pass@example.com:8388",
+			wantHost:          "example.com",
 			wantResolvedCount: 2,
-			wantErr:   false,
+			wantErr:           false,
 		},
 		{
-			name:      "Invalid URL",
-			transport: "invalid-url",
-			wantHost:  "",
+			name:              "Invalid URL",
+			transport:         "invalid-url",
+			wantHost:          "",
 			wantResolvedCount: 0,
-			wantErr:   true,
+			wantErr:           true,
 		},
 	}
 
@@ -50,8 +50,8 @@ func TestResolveURL(t *testing.T) {
 				if got.Host != tt.wantHost {
 					t.Errorf("resolveURL() got Host = %v, want %v", got.Host, tt.wantHost)
 				}
-				if len(got.Resolved) != tt.wantResolvedCount {
-					t.Errorf("resolveURL() got %d resolved URLs, want %d", len(got.Resolved), tt.wantResolvedCount)
+				if len(got.URLs) != tt.wantResolvedCount {
+					t.Errorf("resolveURL() got %d resolved URLs, want %d", len(got.URLs), tt.wantResolvedCount)
 				}
 			}
 		})
@@ -69,7 +69,7 @@ func TestAddTransportInfo(t *testing.T) {
 			name: "Valid IP address",
 			input: &resolvedURLs{
 				Host: "192.168.1.1",
-				Resolved: []*url.URL{
+				URLs: []*url.URL{
 					mustParseURL("ss://user:pass@192.168.1.1:8388?key1=value1&key2=value2"),
 				},
 			},
@@ -90,10 +90,9 @@ func TestAddTransportInfo(t *testing.T) {
 			name: "Valid domain name",
 			input: &resolvedURLs{
 				Host: "example.com",
-				Resolved: []*url.URL{
+				URLs: []*url.URL{
 					mustParseURL("ss://user:pass@93.184.216.34:8388"),
 					mustParseURL("ss://user:pass@[2001:db8::1]:8388"),
-
 				},
 			},
 			want: []transportJSON{
@@ -106,7 +105,7 @@ func TestAddTransportInfo(t *testing.T) {
 					Port:      "8388",
 					Params:    map[string]string{},
 				},
-				{	
+				{
 					Scheme:    "ss",
 					UserInfo:  "user:pass",
 					Host:      "example.com",
