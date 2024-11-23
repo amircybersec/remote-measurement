@@ -81,22 +81,36 @@ func makeErrorRecord(result *connectivity.ConnectivityError) *errorJSON {
 	var record = new(errorJSON)
 	record.Op = result.Op
 	record.PosixError = result.PosixError
-	record.Msg = unwrapAll(result.Err).Error()
+	record.Msg = findBaseError(result.Err).Error()
 	record.MsgVerbose = result.Err.Error()
 
 	return record
 }
 
-func unwrapAll(err error) error {
-	for {
+// findBaseError unwraps an error chain to find the most basic underlying error
+func findBaseError(err error) error {
+	for err != nil {
+		// Try to unwrap as joined errors first
+		if unwrapInterface, ok := err.(interface{ Unwrap() []error }); ok {
+			errs := unwrapInterface.Unwrap()
+			if len(errs) > 0 {
+				// Take the last error in the joined slice as it's likely
+				// to be the most specific one
+				err = errs[len(errs)-1]
+				continue
+			}
+		}
+
+		// Try to unwrap as single error
 		unwrapped := errors.Unwrap(err)
 		if unwrapped == nil {
+			// We've reached the base error
 			return err
 		}
 		err = unwrapped
 	}
+	return err
 }
-
 func (r ConnectivityReport) IsSuccess() bool {
 	if r.Test.Error == nil {
 		return true
