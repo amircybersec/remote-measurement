@@ -257,7 +257,7 @@ func init() {
 	measureCmd.Flags().String("isp", "", "ISP name (optional)")
 	measureCmd.Flags().String("network", "", "Network type (residential or mobile)")
 	measureCmd.Flags().Int("clients", 0, "Maximum number of clients to test with")
-	measureCmd.Flags().Int64("server-id", 0, "Specific server ID to test (optional)")
+	measureCmd.Flags().Int64Slice("server-id", []int64{}, "Specific server ID to test (optional)")
 
 	// Remove the Args requirement since we're using flags
 	measureCmd.Args = cobra.NoArgs
