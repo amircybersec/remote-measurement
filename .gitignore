@@ -35,3 +35,7 @@ githubKeys.txt
 
 .DS_Store
 */.DS_Store
+
+# exclude key files
+*.txt
+*.csv
