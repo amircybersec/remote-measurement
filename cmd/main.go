@@ -101,7 +101,7 @@ Examples:
   # Test with random ISPs:
   measure --proxy soax --country ir --network mobile --clients 10
   # Test with specific ISP and server group:
-  measure --proxy soax --country ir --isp MNT%20Irancell --network mobile --clients 5 --server-id 512
+  measure --proxy soax --country ir --isp MNT%20Irancell --network mobile --clients 5 --server-name shadowmere
 
   Flags:
   --proxy: Optional. Proxy service (soax or proxyrack); Defaul is proxyrack
@@ -109,8 +109,8 @@ Examples:
   --isp: Optional. ISP name. If not provided, tests will be pick random ISPs from target country and network type
   --network: Optional. Network type (residential or mobile). Default is residential
   --clients: Required. Maximum number of clients to test with
-  --server-id: Optional. Specific server ID to test
-  --server-group: Optional. Specific server group name to test.
+  --server-id: Optional. Specific server ID to test. Only server id or server name can be provided at a time.
+  --server-name: Optional. Specific server group name to test. Only server id or server name can be provided at a time.
 
   Please note either server ID or server group name can be provided`,
 
@@ -122,6 +122,7 @@ Examples:
 		network, _ := cmd.Flags().GetString("network")
 		clients, _ := cmd.Flags().GetInt("clients")
 		serverID, _ := cmd.Flags().GetInt64Slice("server-id")
+		serverName, _ := cmd.Flags().GetStringSlice("server-name")
 
 		// Validate required flags
 		if proxyName == "" || country == "" || network == "" || clients == 0 {
@@ -130,6 +131,12 @@ Examples:
 				"country", country,
 				"network", network,
 				"clients", clients)
+			os.Exit(1)
+		}
+
+		// make sure only server ID or server name is provided
+		if len(serverID) > 0 && len(serverName) > 0 {
+			logger.Error("Only one of server ID or server name can be provided")
 			os.Exit(1)
 		}
 
@@ -188,12 +195,13 @@ Examples:
 		}
 
 		settings := measurement.Settings{
-			MaxClients: clients,
-			MaxRetries: maxRetries,
-			ServerIDs:  serverID,
-			Country:    country,
-			ISP:        isp,
-			ClientType: clientType,
+			MaxClients:  clients,
+			MaxRetries:  maxRetries,
+			ServerIDs:   serverID,
+			ServerNames: serverName,
+			Country:     country,
+			ISP:         isp,
+			ClientType:  clientType,
 		}
 
 		// Initialize database
@@ -258,6 +266,7 @@ func init() {
 	measureCmd.Flags().String("network", "", "Network type (residential or mobile)")
 	measureCmd.Flags().Int("clients", 0, "Maximum number of clients to test with")
 	measureCmd.Flags().Int64Slice("server-id", []int64{}, "Specific server ID to test (optional)")
+	measureCmd.Flags().StringSlice("server-name", []string{}, "Specific server group names to test (optional)")
 
 	// Remove the Args requirement since we're using flags
 	measureCmd.Args = cobra.NoArgs

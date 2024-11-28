@@ -18,12 +18,13 @@ import (
 )
 
 type Settings struct {
-	Country    string
-	ISP        string
-	ClientType models.ClientType
-	ServerIDs  []int64
-	MaxRetries int
-	MaxClients int
+	Country     string
+	ISP         string
+	ClientType  models.ClientType
+	ServerIDs   []int64
+	ServerNames []string
+	MaxRetries  int
+	MaxClients  int
 }
 
 // MeasurementService struct update to include configuration
@@ -67,6 +68,13 @@ func (s *MeasurementService) RunMeasurements(ctx context.Context, p proxy.Provid
 		srvs, err := s.db.GetServersByIDs(ctx, settings.ServerIDs)
 		if err != nil {
 			return fmt.Errorf("failed to get server by ID: %v", err)
+		}
+		servers = append(servers, srvs...)
+	} else if len(settings.ServerNames) != 0 {
+		// Get server by name
+		srvs, err := s.db.GetServersByNames(ctx, settings.ServerNames)
+		if err != nil {
+			return fmt.Errorf("failed to get server by name: %v", err)
 		}
 		servers = append(servers, srvs...)
 	} else {

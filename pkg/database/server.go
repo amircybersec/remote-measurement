@@ -194,3 +194,62 @@ func (db *DB) GetServersByIDs(ctx context.Context, ids []int64) ([]models.Server
 
 	return servers, nil
 }
+
+func (db *DB) GetServersByNames(ctx context.Context, names []string) ([]models.Server, error) {
+	var servers []models.Server
+
+	// If no names provided, return empty slice
+	if len(names) == 0 {
+		return servers, nil
+	}
+
+	err := db.NewSelect().
+		Model(&servers).
+		Where("name IN (?)", bun.In(names)).
+		Scan(ctx)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("no servers found for names %v", names)
+		}
+		return nil, fmt.Errorf("error getting servers by names %v: %w", names, err)
+	}
+
+	// Check if we found all requested servers
+	if len(servers) != len(names) {
+		// Create a map of found names for easy lookup
+		foundNames := make(map[string]bool)
+		for _, server := range servers {
+			foundNames[server.Name] = true
+		}
+
+		// Find missing names
+		var missingNames []string
+		for _, name := range names {
+			if !foundNames[name] {
+				missingNames = append(missingNames, name)
+			}
+		}
+
+		logger := slog.Default()
+		logger.Warn("Some requested servers were not found",
+			"requestedNames", names,
+			"missingNames", missingNames)
+	}
+
+	// Log the results
+	logger := slog.Default()
+	logger.Debug("Retrieved servers by names",
+		"requestedNames", names,
+		"foundCount", len(servers))
+
+	for _, server := range servers {
+		logger.Debug("Server details",
+			"id", server.ID,
+			"ip", server.IP,
+			"port", server.Port,
+			"name", server.Name)
+	}
+
+	return servers, nil
+}
