@@ -34,6 +34,9 @@ type MeasurementService struct {
 	config   *viper.Viper
 	prefixes []string
 	provider proxy.Provider
+
+	activeClients sync.Map      // stores active clients being monitored
+	stopMonitor   chan struct{} // channel to stop monitoring
 }
 
 // measurementJob represents a single measurement task
@@ -51,11 +54,13 @@ func NewMeasurementService(db *database.DB, logger *slog.Logger, config *viper.V
 	}
 
 	return &MeasurementService{
-		db:       db,
-		logger:   logger,
-		config:   config,
-		prefixes: prefixes,
-		provider: provider,
+		db:            db,
+		logger:        logger,
+		config:        config,
+		prefixes:      prefixes,
+		provider:      provider,
+		activeClients: sync.Map{},
+		stopMonitor:   make(chan struct{}),
 	}
 }
 
@@ -141,8 +146,18 @@ func (s *MeasurementService) RunMeasurements(ctx context.Context, p proxy.Provid
 				"clientID", savedClient.ID,
 				"clientIP", savedClient.IP)
 
+			// Set client session length based on number of servers to measure
+			// More servers need more time to measure
+			// SessionLength is in seconds
+			// Each server test with retires and prefixes can take up to 150 seconds
+			savedClient.SessionLength = len(servers) * p.GetSessionLength()
+
 			// save the proxy socks5 transport URL
 			savedClient.ProxyURL = p.BuildTransportURL(savedClient)
+
+			// Start monitoring the client
+			s.startClientMonitoring(savedClient)
+
 			// Process measurements in parallel
 			s.processMeasurements(savedClient, servers)
 		}
@@ -187,6 +202,16 @@ func (s *MeasurementService) getWorkingServers(ctx context.Context, proxyProvide
 
 // measureServer performs connectivity tests from a client to a server
 func (s *MeasurementService) measureServer(client models.Client, server models.Server) error {
+	// Check if client session is not expired and
+	// return an error to abort the measurement job
+	if client.ExpirationTime.Before(time.Now()) {
+		s.logger.Warn("Client session has expired",
+			"clientID", client.ID,
+			"clientIP", client.IP,
+			"Expired seconds ago:", time.Since(client.ExpirationTime).Seconds())
+		return fmt.Errorf("client session has expired")
+	}
+
 	// Generate a unique session ID for this measurement series
 	sessionID := uuid.New().String()
 
@@ -236,11 +261,14 @@ func (s *MeasurementService) measureServer(client models.Client, server models.S
 					"prefix", prefix,
 					"newAccessLink", newAccessLink,
 				)
-				if err := s.performProtocolMeasurement(client, server, sessionID, retryCount, prefix, &newAccessLink, protocol); err != nil {
-					s.logger.Warn("prefix measurement failed",
-						"protocol", protocol,
-						"prefix", prefix,
-						"error", err)
+				// don't try prefixes on udp as it's not supported
+				if protocol == "tcp" {
+					if err := s.performProtocolMeasurement(client, server, sessionID, retryCount, prefix, &newAccessLink, protocol); err != nil {
+						s.logger.Warn("prefix measurement failed",
+							"protocol", protocol,
+							"prefix", prefix,
+							"error", err)
+					}
 				}
 			}
 		} else {
@@ -460,4 +488,80 @@ func (s *MeasurementService) processMeasurements(client *models.Client, servers 
 				"errorCount", errorCount)
 		}
 	}
+}
+
+// startClientMonitoring starts monitoring a client's validity (IP hasn't changed)
+func (s *MeasurementService) startClientMonitoring(client *models.Client) {
+	// Store client in active clients map
+	s.activeClients.Store(client.ID, client)
+
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				// Check if client is still in active clients map
+				if _, exists := s.activeClients.Load(client.ID); !exists {
+					s.logger.Debug("Client no longer being monitored, stopping goroutine",
+						"clientID", client.ID,
+						"clientIP", client.IP)
+					return
+				}
+
+				valid, err := s.provider.IsValidClient(client)
+				if err != nil {
+					s.logger.Error("Failed to validate client",
+						"clientID", client.ID,
+						"clientIP", client.IP,
+						"error", err)
+					continue
+				}
+
+				if !valid {
+					s.logger.Warn("Client is no longer valid",
+						"clientID", client.ID,
+						"clientIP", client.IP)
+
+					// Remove client from active monitoring
+					s.activeClients.Delete(client.ID)
+
+					// Update client in database to mark as expired
+					if err := s.db.UpdateClientExpiration(context.Background(), client.ID, client.ExpirationTime); err != nil {
+						s.logger.Error("Failed to update client expiration in database",
+							"clientID", client.ID,
+							"error", err)
+					}
+					return
+				}
+
+				s.logger.Debug("Client validated successfully",
+					"clientID", client.ID,
+					"clientIP", client.IP)
+
+			case <-s.stopMonitor:
+				s.logger.Debug("Stopping client monitoring",
+					"clientID", client.ID,
+					"clientIP", client.IP)
+				return
+			}
+		}
+	}()
+}
+
+// stopClientMonitoring stops monitoring a specific client
+func (s *MeasurementService) stopClientMonitoring(clientID int64) {
+	s.activeClients.Delete(clientID)
+}
+
+// Shutdown cleans up the MeasurementService
+func (s *MeasurementService) Shutdown() {
+	close(s.stopMonitor)
+	// Wait a moment for goroutines to clean up
+	time.Sleep(100 * time.Millisecond)
+	s.activeClients.Range(func(key, value interface{}) bool {
+		s.stopClientMonitoring(key.(int64))
+		return true
+	})
 }
