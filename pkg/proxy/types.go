@@ -27,4 +27,6 @@ type Provider interface {
 	GetClientForISP(isp string, clientType models.ClientType, country string, maxRetries int) (*models.Client, error)
 	BuildTransportURL(client *models.Client) string
 	GetProviderName() string
+	IsValidClient(client *models.Client) (bool, error)
+	GetSessionLength() int
 }

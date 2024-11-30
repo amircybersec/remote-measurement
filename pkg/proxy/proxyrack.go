@@ -47,6 +47,11 @@ func newProxyRackProvider(config Config, logger *slog.Logger) *ProxyRackProvider
 	}
 }
 
+// GetSessionLength returns the session length in seconds
+func (p *ProxyRackProvider) GetSessionLength() int {
+	return p.config.SessionLength
+}
+
 func (p *ProxyRackProvider) GetProviderName() string {
 	return "proxyrack"
 }
@@ -125,19 +130,25 @@ func (p *ProxyRackProvider) GetClientForISP(isp string, clientType models.Client
 		}
 
 		// Get ASN information
-		asnInfo, err := ipinfo.GetIPInfo(ipInfo.Data.IP)
+		ipInfoIO, err := ipinfo.GetIPInfo(ipInfo.Data.IP)
 		if err != nil {
 			continue
 		}
 
 		// Parse ASN and org name
-		orgParts := strings.SplitN(asnInfo.Org, " ", 2)
+		orgParts := strings.SplitN(ipInfoIO.Org, " ", 2)
 		var asNumber, asOrg string
 		if len(orgParts) == 2 {
 			asNumber = strings.TrimPrefix(orgParts[0], "AS")
 			asOrg = orgParts[1]
 		} else {
-			asOrg = asnInfo.Org
+			asOrg = ipInfoIO.Org
+		}
+
+		// Use ipinfo.io city as fallback if SOAX city is empty
+		city := ipInfo.Data.City
+		if city == "" {
+			city = ipInfoIO.City
 		}
 
 		// Determine IP version
@@ -172,7 +183,7 @@ func (p *ProxyRackProvider) GetClientForISP(isp string, clientType models.Client
 			ExpirationTime: now.Add(time.Duration(sessionLength) * time.Second),
 			IPVersion:      ipVersion,
 			Carrier:        ipInfo.Data.Carrier,
-			City:           ipInfo.Data.City,
+			City:           city,
 			CountryCode:    ipInfo.Data.CountryCode,
 			CountryName:    ipInfo.Data.CountryName,
 			ASNumber:       asNumber,
@@ -192,11 +203,48 @@ func (p *ProxyRackProvider) GetClientForISP(isp string, clientType models.Client
 func (p *ProxyRackProvider) BuildTransportURL(client *models.Client) string {
 	encodedISP := strings.ReplaceAll(url.QueryEscape(client.ISP), "+", "%20")
 
-	return fmt.Sprintf("socks5://%s-country-%s-session-%d-isp-%s-autoReplace-strict:%s@%s",
+	return fmt.Sprintf("socks5://%s-country-%s-session-%d-refreshMinutes-%d-isp-%s-autoReplace-strict:%s@%s",
 		p.config.Username,
 		strings.ToUpper(client.CountryCode),
 		client.SessionID,
+		client.SessionLength/60,
 		encodedISP,
 		p.config.APIKey,
 		p.config.Endpoint)
+}
+
+// IsValid checks if the client's IP hasn't changed and is still valid
+func (p *ProxyRackProvider) IsValidClient(client *models.Client) (bool, error) {
+	//transport := p.BuildTransportURL(client)
+
+	opts := fetch.Options{
+		Transport:  client.ProxyURL,
+		Method:     "GET",
+		Headers:    []string{"User-Agent: MyApp/1.0"},
+		TimeoutSec: 10,
+	}
+
+	result, err := fetch.Fetch("https://checker.soax.com/api/ipinfo", opts)
+	if err != nil {
+		return false, fmt.Errorf("failed to fetch IP info: %w", err)
+	}
+
+	var ipInfo models.SoaxIPInfo
+	if err := json.Unmarshal(result.Body, &ipInfo); err != nil {
+		return false, fmt.Errorf("failed to decode IP info: %w", err)
+	}
+
+	// Check if the IP has changed
+	if ipInfo.Data.IP != client.IP {
+		p.logger.Info("client IP has changed",
+			"old_ip", client.IP,
+			"new_ip", ipInfo.Data.IP,
+			"session_id", client.SessionID)
+
+		// Mark the client as expired by setting expiration time to now
+		client.ExpirationTime = time.Now()
+		return false, nil
+	}
+
+	return true, nil
 }

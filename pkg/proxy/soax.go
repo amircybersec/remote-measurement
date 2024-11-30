@@ -63,6 +63,11 @@ func shuffleStrings(slice []string) {
 	}
 }
 
+// GetSessionLength returns the session length in seconds
+func (p *SoaxProvider) GetSessionLength() int {
+	return p.config.SessionLength
+}
+
 func (p *SoaxProvider) GetISPList(countryISO string, clientType models.ClientType) ([]string, error) {
 	var packageKey string
 	var endpoint string
@@ -149,6 +154,12 @@ func (p *SoaxProvider) GetClientForISP(isp string, clientType models.ClientType,
 			asOrg = asnInfo.Org
 		}
 
+		// Use ipinfo.io city as fallback if SOAX city is empty
+		city := ipInfo.Data.City
+		if city == "" {
+			city = asnInfo.City
+		}
+
 		// Determine IP version
 		ip := net.ParseIP(ipInfo.Data.IP)
 		var ipVersion string
@@ -181,7 +192,7 @@ func (p *SoaxProvider) GetClientForISP(isp string, clientType models.ClientType,
 			ExpirationTime: now.Add(time.Duration(sessionLength) * time.Second),
 			IPVersion:      ipVersion,
 			Carrier:        ipInfo.Data.Carrier,
-			City:           ipInfo.Data.City,
+			City:           city,
 			CountryCode:    ipInfo.Data.CountryCode,
 			CountryName:    ipInfo.Data.CountryName,
 			ASNumber:       asNumber,
@@ -222,4 +233,40 @@ func (p *SoaxProvider) BuildTransportURL(client *models.Client) string {
 		encodedISP,
 		packageKey,
 		p.config.Endpoint)
+}
+
+// IsValid checks if the client's IP hasn't changed and is still valid
+func (p *SoaxProvider) IsValidClient(client *models.Client) (bool, error) {
+	transport := p.BuildTransportURL(client)
+
+	opts := fetch.Options{
+		Transport:  transport,
+		Method:     "GET",
+		Headers:    []string{"User-Agent: MyApp/1.0"},
+		TimeoutSec: 10,
+	}
+
+	result, err := fetch.Fetch("https://checker.soax.com/api/ipinfo", opts)
+	if err != nil {
+		return false, fmt.Errorf("failed to fetch IP info: %w", err)
+	}
+
+	var ipInfo models.SoaxIPInfo
+	if err := json.Unmarshal(result.Body, &ipInfo); err != nil {
+		return false, fmt.Errorf("failed to decode IP info: %w", err)
+	}
+
+	// Check if the IP has changed
+	if ipInfo.Data.IP != client.IP {
+		p.logger.Info("client IP has changed",
+			"old_ip", client.IP,
+			"new_ip", ipInfo.Data.IP,
+			"session_id", client.SessionID)
+
+		// Mark the client as expired by setting expiration time to now
+		client.ExpirationTime = time.Now()
+		return false, nil
+	}
+
+	return true, nil
 }
