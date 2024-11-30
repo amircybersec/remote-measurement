@@ -65,3 +65,18 @@ func (db *DB) GetActiveClientByIP(ctx context.Context, ip string) (*models.Clien
 
 	return &client, nil
 }
+
+// UpdateClientExpiration updates the expiration time of a client using bun ORM
+func (db *DB) UpdateClientExpiration(ctx context.Context, clientID int64, expirationTime time.Time) error {
+	_, err := db.NewUpdate().
+		Model((*models.Client)(nil)).
+		Set("expiration_time = ?", expirationTime).
+		Where("id = ?", clientID).
+		Exec(ctx)
+
+	if err != nil {
+		return fmt.Errorf("failed to update client expiration: %w", err)
+	}
+
+	return nil
+}
