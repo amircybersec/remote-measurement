@@ -1,10 +1,14 @@
 SELECT 
     m.id as measurement_id,
     m.time as measurement_time,
-    m.tcp_error_op,
-    m.tcp_error_msg,
-    m.udp_error_op,
-    m.udp_error_msg,
+    m.protocol,
+    m.error_op,
+    m.error_msg,
+    m.error_msg_verbose,
+    m.duration,
+    m.session_id,
+    m.retry_number,
+    m.prefix_used,
     -- Client fields
     c.id as client_id,
     c.ip as client_ip,
@@ -12,9 +16,12 @@ SELECT
     c.isp as client_isp,
     c.as_number as client_as_number,
     c.country_code as client_country,
+    c.carrier as client_carrier,
     c.city as client_city,
+    c.proxy as proxy,
     -- Server fields
     s.id as server_id,
+    s.name as server_name,
     s.ip as server_ip,
     s.port as server_port,
     s.as_number as server_as_number,
@@ -23,8 +30,10 @@ SELECT
     s.domain_name as server_domain,
     s.country as server_country,
     s.city as server_city,
-    s.region as server_region
-FROM measurements m
+    s.region as server_region,
+    s.udp_error_op as server_udp_error_op,
+    s.tcp_error_op as server_tcp_error_op
+FROM measurement m
     JOIN clients c ON m.client_id = c.id
     JOIN servers s ON m.server_id = s.id
 ORDER BY m.time DESC;
