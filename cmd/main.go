@@ -183,6 +183,12 @@ Examples:
 				Endpoint:      viper.GetString("proxyrack.endpoint"),
 				MaxWorkers:    viper.GetInt("proxyrack.max_workers"),
 			}
+		case "none":
+			providerConfig = proxy.Config{
+				System:        proxy.SystemNone,
+				SessionLength: 86400,
+				MaxWorkers:    100,
+			}
 		default:
 			logger.Error("Invalid proxy name. Must be 'soax' or 'proxyrack'")
 			os.Exit(1)
@@ -260,11 +266,11 @@ func init() {
 	rootCmd.AddCommand(measureCmd)
 
 	// Add new flags to measureCmd
-	measureCmd.Flags().String("proxy", "", "Proxy service (soax or proxyrack)")
-	measureCmd.Flags().String("country", "", "Country code (e.g., us, uk)")
+	measureCmd.Flags().String("proxy", "none", "Proxy service (soax, proxyrack, or none)")
+	measureCmd.Flags().String("country", "us", "Country code (e.g., us, uk)")
 	measureCmd.Flags().String("isp", "", "ISP name (optional)")
-	measureCmd.Flags().String("network", "", "Network type (residential or mobile)")
-	measureCmd.Flags().Int("clients", 0, "Maximum number of clients to test with")
+	measureCmd.Flags().String("network", "residential", "Network type (residential or mobile)")
+	measureCmd.Flags().Int("clients", 1, "Maximum number of clients to test with")
 	measureCmd.Flags().Int64Slice("server-id", []int64{}, "Specific server ID to test (optional)")
 	measureCmd.Flags().StringSlice("server-name", []string{}, "Specific server group names to test (optional)")
 

@@ -12,6 +12,8 @@ func NewProvider(config Config, logger *slog.Logger) (Provider, error) {
 		return newSoaxProvider(config, logger), nil
 	case SystemProxyRack:
 		return newProxyRackProvider(config, logger), nil
+	case SystemNone:
+		return newNoneProvider(config, logger), nil
 	default:
 		return nil, fmt.Errorf("unsupported proxy system: %s", config.System)
 	}

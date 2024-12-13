@@ -297,17 +297,6 @@ func (s *MeasurementService) performProtocolMeasurement(
 	s.logger.Debug("Building transport",
 		"Proxy transport URL: ",
 		client.ProxyURL)
-	var transport string
-	if accessLinkOverride != nil {
-		transport = fmt.Sprintf("%s|%s", client.ProxyURL, *accessLinkOverride)
-	} else {
-		transport = fmt.Sprintf("%s|%s", client.ProxyURL, server.FullAccessLink)
-	}
-
-	// Skip test for protocol if there is an error message for it on the server
-	if s.shouldSkipProtocol(protocol, server) {
-		return nil
-	}
 
 	s.logger.Debug("Testing connectivity",
 		"sessionID", sessionID,
@@ -327,6 +316,29 @@ func (s *MeasurementService) performProtocolMeasurement(
 		PrefixUsed:  prefix,
 	}
 
+	var transport string
+	// Determine transport URL
+	if client.Proxy == "none" {
+		// Connect directly to the server
+		if accessLinkOverride != nil {
+			transport = *accessLinkOverride
+		} else {
+			transport = server.FullAccessLink
+		}
+	} else {
+		// Skip test for protocol if there is an error message for it on the server
+		// only applicable to remote measurements
+		if s.shouldSkipProtocol(protocol, server) {
+			return nil
+		}
+		if accessLinkOverride != nil {
+			transport = fmt.Sprintf("%s|%s", client.ProxyURL, *accessLinkOverride)
+		} else {
+			transport = fmt.Sprintf("%s|%s", client.ProxyURL, server.FullAccessLink)
+		}
+	}
+
+	// Perform connectivity test
 	report, err := connectivity.TestConnectivity(
 		transport,
 		protocol,
@@ -341,6 +353,20 @@ func (s *MeasurementService) performProtocolMeasurement(
 	// Save measurement
 	if err := s.db.InsertMeasurement(context.Background(), &measurement); err != nil {
 		return fmt.Errorf("failed to save measurement: %v", err)
+	}
+
+	// Update server errors if this is a local client
+	if client.Proxy == "none" {
+		if protocol == "tcp" {
+			server.TCPErrorMsg = measurement.ErrorMsg
+			server.TCPErrorOp = measurement.ErrorOp
+		} else {
+			server.UDPErrorMsg = measurement.ErrorMsg
+			server.UDPErrorOp = measurement.ErrorOp
+		}
+
+		return s.db.UpsertServer(context.Background(), &server)
+
 	}
 
 	return nil
@@ -437,14 +463,7 @@ func (s *MeasurementService) worker(wg *sync.WaitGroup, jobs <-chan measurementJ
 // processMeasurements handles parallel processing of measurements for a client
 func (s *MeasurementService) processMeasurements(client *models.Client, servers []models.Server) {
 	// Determine number of workers
-	var maxWorkers int
-	if s.provider.GetProviderName() == "proxyrack" {
-		maxWorkers = s.config.GetInt("proxyrack.max_workers")
-	} else if s.provider.GetProviderName() == "soax" {
-		maxWorkers = s.config.GetInt("soax.max_workers")
-	} else {
-		maxWorkers = 1
-	}
+	maxWorkers := s.provider.GetMaxWorkers()
 
 	// Ensure we don't create more workers than jobs
 	if maxWorkers > len(servers) {

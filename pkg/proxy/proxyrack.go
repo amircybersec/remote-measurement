@@ -248,3 +248,7 @@ func (p *ProxyRackProvider) IsValidClient(client *models.Client) (bool, error) {
 
 	return true, nil
 }
+
+func (p *ProxyRackProvider) GetMaxWorkers() int {
+	return p.config.MaxWorkers
+}

@@ -270,3 +270,7 @@ func (p *SoaxProvider) IsValidClient(client *models.Client) (bool, error) {
 
 	return true, nil
 }
+
+func (p *SoaxProvider) GetMaxWorkers() int {
+	return p.config.MaxWorkers
+}

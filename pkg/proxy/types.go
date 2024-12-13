@@ -8,6 +8,7 @@ type System string
 const (
 	SystemSOAX      System = "soax"
 	SystemProxyRack System = "proxyrack"
+	SystemNone      System = "none"
 )
 
 type Config struct {
@@ -29,4 +30,5 @@ type Provider interface {
 	GetProviderName() string
 	IsValidClient(client *models.Client) (bool, error)
 	GetSessionLength() int
+	GetMaxWorkers() int
 }
