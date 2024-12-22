@@ -80,3 +80,34 @@ func (db *DB) UpdateClientExpiration(ctx context.Context, clientID int64, expira
 
 	return nil
 }
+
+// GetClientsWithMissingInfo returns all clients that have missing information
+func (db *DB) GetClientsWithMissingInfo(ctx context.Context) ([]models.Client, error) {
+	var clients []models.Client
+	err := db.NewSelect().
+		Model(&clients).
+		Where("city = '' OR country_code = ''").
+		Scan(ctx)
+
+	if err != nil {
+		return nil, fmt.Errorf("error querying clients: %v", err)
+	}
+
+	return clients, nil
+}
+
+// UpdateClientInfo updates the client's information in the database
+func (db *DB) UpdateClientInfo(ctx context.Context, client *models.Client) error {
+	_, err := db.NewUpdate().
+		Model(client).
+		Set("city = ?", client.City).
+		Set("country_code = ?", client.CountryCode).
+		Where("id = ?", client.ID).
+		Exec(ctx)
+
+	if err != nil {
+		return fmt.Errorf("failed to update client info: %w", err)
+	}
+
+	return nil
+}

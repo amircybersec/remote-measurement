@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/viper"
 
 	"connectivity-tester/pkg/database"
+	"connectivity-tester/pkg/ipinfo"
 	"connectivity-tester/pkg/measurement"
 	"connectivity-tester/pkg/models"
 	"connectivity-tester/pkg/proxy"
@@ -254,6 +255,86 @@ Examples:
 	},
 }
 
+var updateClientsCmd = &cobra.Command{
+	Use:   "update-clients",
+	Short: "Update missing information for clients in the database",
+	Long: `Update missing information for clients in the database using ipinfo.io API.
+Examples:
+  # Update missing city information
+  update-clients --city
+  # Update missing country information
+  update-clients --country
+  # Update all missing information
+  update-clients --all`,
+
+	Run: func(cmd *cobra.Command, args []string) {
+		updateCity, _ := cmd.Flags().GetBool("city")
+		updateCountry, _ := cmd.Flags().GetBool("country")
+		updateAll, _ := cmd.Flags().GetBool("all")
+
+		if !updateCity && !updateCountry && !updateAll {
+			logger.Error("At least one update flag must be specified (--city, --country, or --all)")
+			os.Exit(1)
+		}
+
+		db, err := initDB()
+		if err != nil {
+			logger.Error("Error initializing database", "error", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+
+		// Get all clients from database
+		clients, err := db.GetClientsWithMissingInfo(context.Background())
+		if err != nil {
+			logger.Error("Error getting clients", "error", err)
+			os.Exit(1)
+		}
+
+		logger.Info("Found clients with missing information", "count", len(clients))
+
+		// Update each client
+		for _, client := range clients {
+			if needsUpdate(&client, updateCity, updateCountry, updateAll) {
+				ipInfo, err := ipinfo.GetIPInfo(client.IP)
+				if err != nil {
+					logger.Error("Failed to get IP info",
+						"clientID", client.ID,
+						"ip", client.IP,
+						"error", err)
+					continue
+				}
+
+				updated := false
+				if (updateCity || updateAll) && client.City == "" {
+					client.City = ipInfo.City
+					updated = true
+				}
+				if (updateCountry || updateAll) && client.CountryCode == "" {
+					client.CountryCode = ipInfo.Country
+					updated = true
+				}
+
+				if updated {
+					if err := db.UpdateClientInfo(context.Background(), &client); err != nil {
+						logger.Error("Failed to update client",
+							"clientID", client.ID,
+							"error", err)
+						continue
+					}
+					logger.Info("Updated client information",
+						"clientID", client.ID,
+						"ip", client.IP,
+						"city", client.City,
+						"country", client.CountryCode)
+				}
+			}
+		}
+
+		logger.Info("Client update completed")
+	},
+}
+
 func init() {
 	cobra.OnInitialize(initConfig)
 
@@ -264,6 +345,7 @@ func init() {
 	rootCmd.AddCommand(addServersCmd)
 	rootCmd.AddCommand(testServersCmd)
 	rootCmd.AddCommand(measureCmd)
+	rootCmd.AddCommand(updateClientsCmd)
 
 	// Add new flags to measureCmd
 	measureCmd.Flags().String("proxy", "none", "Proxy service (soax, proxyrack, or none)")
@@ -276,6 +358,11 @@ func init() {
 
 	// Remove the Args requirement since we're using flags
 	measureCmd.Args = cobra.NoArgs
+
+	// Add update-clients command
+	updateClientsCmd.Flags().Bool("city", false, "Update missing city information")
+	updateClientsCmd.Flags().Bool("country", false, "Update missing country information")
+	updateClientsCmd.Flags().Bool("all", false, "Update all missing information")
 }
 
 func initConfig() {
@@ -311,4 +398,11 @@ func main() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+}
+
+func needsUpdate(client *models.Client, updateCity, updateCountry, updateAll bool) bool {
+	if updateAll {
+		return client.City == "" || client.CountryCode == ""
+	}
+	return (updateCity && client.City == "") || (updateCountry && client.CountryCode == "")
 }
