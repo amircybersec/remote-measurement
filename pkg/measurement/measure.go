@@ -218,7 +218,7 @@ func (s *MeasurementService) measureServer(client models.Client, server models.S
 	// Perform initial measurements for both protocols
 	initialResults := make(map[string]bool) // map[protocol]hasError
 
-	// Perform initial TCP and UDP measurements
+	// Perform initial TCP and UDP measurements, set retry number to 0
 	if err := s.performMeasurement(client, server, sessionID, 0, "", nil); err != nil {
 		return fmt.Errorf("initial measurement failed: %v", err)
 	}
@@ -252,23 +252,23 @@ func (s *MeasurementService) measureServer(client models.Client, server models.S
 					"protocol", protocol,
 					"error", err)
 			}
-
-			// Try with different prefixes for this protocol
-			for _, prefix := range s.prefixes {
-				retryCount = retryCount + 1
-				newAccessLink := server.FullAccessLink + "?prefix=" + prefix
-				s.logger.Debug("Testing with prefix",
-					"prefix", prefix,
-					"newAccessLink", newAccessLink,
-				)
-				// don't try prefixes on udp as it's not supported
-				if protocol == "tcp" {
+			// don't try prefixes on udp as it's not supported
+			if protocol == "tcp" {
+				// Try with different prefixes for this protocol
+				for _, prefix := range s.prefixes {
+					newAccessLink := server.FullAccessLink + "?prefix=" + prefix
+					s.logger.Debug("Testing with prefix",
+						"prefix", prefix,
+						"newAccessLink", newAccessLink,
+					)
+					retryCount = retryCount + 1
 					if err := s.performProtocolMeasurement(client, server, sessionID, retryCount, prefix, &newAccessLink, protocol); err != nil {
 						s.logger.Warn("prefix measurement failed",
 							"protocol", protocol,
 							"prefix", prefix,
 							"error", err)
 					}
+					// TODO: try split for tcp if at least one retry has succeeded
 				}
 			}
 		} else {
