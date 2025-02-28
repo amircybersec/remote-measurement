@@ -13,7 +13,7 @@ import (
 	"connectivity-tester/pkg/models"
 )
 
-func AddServersFromFile(db *database.DB, filename string, serversName string) error {
+func AddServersFromFile(db *database.DB, filename string, serversName string, preresolve bool) error {
 	file, err := os.Open(filename)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %v", err)
@@ -23,7 +23,7 @@ func AddServersFromFile(db *database.DB, filename string, serversName string) er
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		accessKey := scanner.Text()
-		servers, err := parseAccessKey(accessKey)
+		servers, err := parseAccessKey(accessKey, preresolve)
 		if err != nil {
 			slog.Error("Error parsing access key", "accessKey", accessKey, "error", err)
 			continue
@@ -63,7 +63,7 @@ func AddServersFromFile(db *database.DB, filename string, serversName string) er
 	return nil
 }
 
-func parseAccessKey(accessKey string) ([]models.Server, error) {
+func parseAccessKey(accessKey string, preresolve bool) ([]models.Server, error) {
 	var servers []models.Server
 	parsedURL, err := url.Parse(accessKey)
 	if err != nil {
@@ -77,6 +77,7 @@ func parseAccessKey(accessKey string) ([]models.Server, error) {
 	fmt.Printf("Fragment:%s\n", fragment)
 	fmt.Printf("FullAccessLink:%s\n", fullURLWithoutFragment)
 
+	// Always resolve URL to get IP addresses
 	urls, err := resolveURL(fullURLWithoutFragment)
 	if err != nil {
 		return nil, err
@@ -95,7 +96,18 @@ func parseAccessKey(accessKey string) ([]models.Server, error) {
 		server.DomainName = t.Host
 		server.UserInfo = t.UserInfo
 		server.Scheme = t.Scheme
-		server.FullAccessLink = t.ResolvedAccessLink
+		// If preresolve is false, use the original domain name in the access link
+		if !preresolve && server.DomainName != "" {
+			// Reconstruct the URL with the original domain
+			u := &url.URL{
+				Scheme: server.Scheme,
+				User:   url.UserPassword(server.UserInfo, ""), // Note: password is empty as it's not stored
+				Host:   server.DomainName + ":" + server.Port,
+			}
+			server.FullAccessLink = u.String()
+		} else {
+			server.FullAccessLink = t.ResolvedAccessLink
+		}
 		server.Fragment = fragment
 		servers = append(servers, server)
 	}

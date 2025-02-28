@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"connectivity-tester/pkg/config"
 	"connectivity-tester/pkg/database"
 	"connectivity-tester/pkg/ipinfo"
 	"connectivity-tester/pkg/measurement"
@@ -60,7 +61,9 @@ var addServersCmd = &cobra.Command{
 			name = args[1]
 		}
 
-		err = server.AddServersFromFile(db, args[0], name)
+		preresolve, _ := cmd.Flags().GetBool("preresolve")
+
+		err = server.AddServersFromFile(db, args[0], name, preresolve)
 		if err != nil {
 			logger.Error("Error adding servers", "error", err)
 			os.Exit(1)
@@ -335,6 +338,30 @@ Examples:
 	},
 }
 
+var jsonToURLCmd = &cobra.Command{
+	Use:   "json-to-url [file]",
+	Short: "Convert SS JSON config file to URL format",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		// Read the JSON file
+		jsonData, err := os.ReadFile(args[0])
+		if err != nil {
+			logger.Error("Error reading file", "error", err)
+			os.Exit(1)
+		}
+
+		// Convert JSON to URL
+		url, err := config.ParseSSConfig(string(jsonData))
+		if err != nil {
+			logger.Error("Error parsing JSON config", "error", err)
+			os.Exit(1)
+		}
+
+		// Print URL to stdout
+		fmt.Println(url)
+	},
+}
+
 func init() {
 	cobra.OnInitialize(initConfig)
 
@@ -346,6 +373,7 @@ func init() {
 	rootCmd.AddCommand(testServersCmd)
 	rootCmd.AddCommand(measureCmd)
 	rootCmd.AddCommand(updateClientsCmd)
+	rootCmd.AddCommand(jsonToURLCmd)
 
 	// Add new flags to measureCmd
 	measureCmd.Flags().String("proxy", "none", "Proxy service (soax, proxyrack, or none)")
@@ -363,6 +391,9 @@ func init() {
 	updateClientsCmd.Flags().Bool("city", false, "Update missing city information")
 	updateClientsCmd.Flags().Bool("country", false, "Update missing country information")
 	updateClientsCmd.Flags().Bool("all", false, "Update all missing information")
+
+	// Add preresolve flag to addServersCmd
+	addServersCmd.Flags().Bool("preresolve", true, "Pre-resolve domain names to IP addresses (default: true)")
 }
 
 func initConfig() {
