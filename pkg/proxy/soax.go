@@ -3,6 +3,7 @@ package proxy
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand"
 	"net"
@@ -71,17 +72,19 @@ func (p *SoaxProvider) GetSessionLength() int {
 func (p *SoaxProvider) GetISPList(countryISO string, clientType models.ClientType) ([]string, error) {
 	var packageKey string
 	var endpoint string
+	var url string
 
 	if clientType == models.ResidentialType {
 		packageKey = p.config.PackageKey
 		endpoint = "https://api.soax.com/api/get-country-isp"
+		url = fmt.Sprintf("%s?api_key=%s&package_key=%s&country_iso=%s&conn_type=wifi",
+			endpoint, p.config.APIKey, packageKey, countryISO)
 	} else {
 		packageKey = p.config.PackageKey
 		endpoint = "https://api.soax.com/api/get-country-operators"
+		url = fmt.Sprintf("%s?api_key=%s&package_key=%s&country_iso=%s",
+			endpoint, p.config.APIKey, packageKey, countryISO)
 	}
-
-	url := fmt.Sprintf("%s?api_key=%s&package_key=%s&country_iso=%s",
-		endpoint, p.config.APIKey, packageKey, countryISO)
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -91,6 +94,10 @@ func (p *SoaxProvider) GetISPList(countryISO string, clientType models.ClientTyp
 
 	var isps []string
 	if err := json.NewDecoder(resp.Body).Decode(&isps); err != nil {
+		// log body of the response
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Println("body:", string(body))
+		p.logger.Error("failed to decode ISP list", "body", string(body))
 		return nil, fmt.Errorf("failed to decode ISP list: %w", err)
 	}
 
